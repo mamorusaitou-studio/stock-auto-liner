@@ -28,26 +28,45 @@ except:
     name_map = {"8306.T": "三菱UFJ", "7203.T": "トヨタ"}
 
 target_list = []
+
 for ticker, name in name_map.items():
     try:
+        # データ取得
         data = yf.download(ticker, period="8mo", progress=False)
+        if len(data) < 75: continue
+
+        # 1. 移動平均線の計算
         ma25 = data['Close'].rolling(window=25).mean()
         ma75 = data['Close'].rolling(window=75).mean()
-        if (ma25.iloc[-1].item() > ma75.iloc[-1].item()) and (ma25.iloc[-2].item() <= ma75.iloc[-2].item()):
-            target_list.append(f"★ {name} ({ticker})")
+        
+        # 2. RSI(14日間)の計算
+        delta = data['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        current_rsi = rsi.iloc[-1].item()
+
+        # 【判定条件】
+        # ① 本日ゴールデンクロス発生
+        is_gc = (ma25.iloc[-1].item() > ma75.iloc[-1].item()) and (ma25.iloc[-2].item() <= ma75.iloc[-2].item())
+        
+        # ② RSIが70未満（まだ過熱しすぎていない）
+        is_not_overbought = current_rsi < 70
+
+        if is_gc and is_not_overbought:
+            target_list.append(f"★ {name} ({ticker})\n   └ RSI: {current_rsi:.1f} (割安度OK)")
+            
     except:
         continue
 
 now_str = datetime.now().strftime('%Y/%m/%d %H:%M')
 
-# --- ここが重要：ファイルに記録を残す命令 ---
+# 記録
 history_file = "history.md"
 with open(history_file, "a", encoding="utf-8") as f:
-    if target_list:
-        f.write(f"### {now_str}\n" + "\n".join(target_list) + "\n\n")
-    else:
-        f.write(f"### {now_str}\n発生なし\n\n")
+    f.write(f"### {now_str}\n" + ("\n".join(target_list) if target_list else "条件合致なし") + "\n\n")
 
 # LINE送信
-msg = f"【🔥爆上予報：GC発生】\n{now_str}\n\n" + "\n".join(target_list) if target_list else f"【通知】{now_str}\n本日の発生はありません。"
+msg = f"【🚀厳選：爆上予報】\n{now_str}\n\n" + ("\n".join(target_list) if target_list else "本日、条件に合う銘柄はありません。")
 send_line(msg)
