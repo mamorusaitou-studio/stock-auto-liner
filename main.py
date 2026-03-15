@@ -33,70 +33,87 @@ def update_spreadsheet(data_list):
     except Exception as e:
         print(f"Spreadsheet Error: {e}")
 
-# ターゲットリスト取得（TOPIX100をターゲットにする例）
+# --- 銘柄リスト取得 (TOPIX 500) ---
 name_map = {}
 try:
-    # WikipediaからTOPIX100のリストを取得（取得できない場合は日経225を予備にする）
-    url = "https://ja.wikipedia.org/wiki/TOPIX_100"
-    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-    with urllib.request.urlopen(req) as response:
-        tables = pd.read_html(response.read())
-    # 複数のテーブルからコードと社名を抽出
-    df_topix = pd.concat([tables[1], tables[2]]) 
-    name_map = {str(row['コード']) + ".T": row['コンポーネント'] for _, row in df_topix.iterrows()}
+    # WikipediaのTOPIX Large70 / Mid400 のページから取得
+    urls = [
+        "https://ja.wikipedia.org/wiki/TOPIX_Core30",
+        "https://ja.wikipedia.org/wiki/TOPIX_Large70",
+        "https://ja.wikipedia.org/wiki/TOPIX_Mid400"
+    ]
+    for url in urls:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req) as response:
+            tables = pd.read_html(response.read())
+            # 各ページの構成に合わせてテーブルを抽出
+            df = tables[1] if "Core30" in url else tables[2]
+            for _, row in df.iterrows():
+                code = str(row['コード']) + ".T"
+                name = row.get('コンポーネント') or row.get('銘柄名') or row.get('社名')
+                name_map[code] = name
 except Exception as e:
     print(f"List Fetch Error: {e}")
-    name_map = {"8306.T": "三菱UFJ", "7203.T": "トヨタ"} # 失敗時のバックアップ
+    name_map = {"8306.T": "三菱UFJ", "7203.T": "トヨタ"} # バックアップ
 
 target_list_line = []
 target_list_sheet = []
 now_str = datetime.now().strftime('%Y/%m/%d %H:%M')
 
-print(f"スキャン開始: {len(name_map)} 銘柄")
+print(f"スキャン開始: {len(name_map)} 銘柄を調査中...")
 
-for ticker, name in name_map.items():
+# --- スキャン実行 ---
+for i, (ticker, name) in enumerate(name_map.items()):
     try:
+        # 進捗ログ（GitHubのログで見れるようにする）
+        if i % 50 == 0: print(f"{i}銘柄目スキャン中...")
+
         data = yf.download(ticker, period="8mo", progress=False)
         if len(data) < 75: continue
 
-        # GC判定
+        # 1. GC判定
         ma25 = data['Close'].rolling(window=25).mean()
         ma75 = data['Close'].rolling(window=75).mean()
         is_gc = (ma25.iloc[-1].item() > ma75.iloc[-1].item()) and (ma25.iloc[-2].item() <= ma75.iloc[-2].item())
         
-        # RSI判定
+        # 2. RSI判定
         delta = data['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rsi = 100 - (100 / (1 + (gain / loss)))
         current_rsi = rsi.iloc[-1].item()
         
-        # 出来高判定
+        # 3. 出来高判定
         avg_volume = data['Volume'].iloc[-6:-1].mean()
         today_volume = data['Volume'].iloc[-1].item()
         vol_ratio = (today_volume / avg_volume) * 100
 
+        # 条件合致！ (RSI 70未満 かつ 出来高120%以上)
         if is_gc and (current_rsi < 70) and (vol_ratio >= 120):
             rsi_comment = "最高！" if current_rsi <= 55 else "勢いアリ"
             vol_comment = "本気買い" if vol_ratio >= 200 else "注目増"
             
-            target_list_line.append(f"🔥【TOPIX極選】{name} ({ticker})\n   ├ RSI: {current_rsi:.1f} ({rsi_comment})\n   └ 出来高: {vol_ratio:.0f}% ({vol_comment})")
+            target_list_line.append(f"🔥【500特選】{name} ({ticker})\n   ├ RSI: {current_rsi:.1f} ({rsi_comment})\n   └ 出来高: {vol_ratio:.0f}% ({vol_comment})")
             target_list_sheet.append([now_str, name, ticker, round(current_rsi, 1), f"{vol_ratio:.0f}%"])
             
-        # サーバー負荷対策でわずかに休憩
-        time.sleep(0.1)
+        # 負荷対策（銘柄数が多いので必須）
+        time.sleep(0.05)
             
     except:
         continue
 
-# スプレッドシートURL
+# --- 結果の送信・記録 ---
 ss_url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/edit"
 
-# 記録・送信
 if target_list_sheet:
     update_spreadsheet(target_list_sheet)
-    msg = f"【🎯TOPIXスキャン完了】\n{now_str}\n\n" + "\n".join(target_list_line) + f"\n\n📊スプシで履歴を確認:\n{ss_url}"
+    # LINEは長すぎると送れないので、5件以上ある場合はスプシ誘導を強調
+    summary = "\n".join(target_list_line[:8]) # 最大8件まで表示
+    if len(target_list_line) > 8:
+        summary += f"\n\n...ほか {len(target_list_line) - 8} 銘柄がヒット！"
+    
+    msg = f"【🎯TOPIX500：スキャン完了】\n{now_str}\n\n{summary}\n\n📊全データはスプシで確認:\n{ss_url}"
 else:
-    msg = f"【🎯TOPIXスキャン】\n{now_str}\n\n本日、条件に合う銘柄はありませんでした。"
+    msg = f"【🎯TOPIX500】\n{now_str}\n\n本日、500銘柄の中に条件合致はありませんでした。"
 
 send_line(msg)
