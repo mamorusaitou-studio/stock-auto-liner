@@ -31,31 +31,32 @@ target_list = []
 
 for ticker, name in name_map.items():
     try:
-        # データ取得
         data = yf.download(ticker, period="8mo", progress=False)
         if len(data) < 75: continue
 
-        # 1. 移動平均線の計算
+        # 1. 移動平均線 (GC判定)
         ma25 = data['Close'].rolling(window=25).mean()
         ma75 = data['Close'].rolling(window=75).mean()
+        is_gc = (ma25.iloc[-1].item() > ma75.iloc[-1].item()) and (ma25.iloc[-2].item() <= ma75.iloc[-2].item())
         
-        # 2. RSI(14日間)の計算
+        # 2. RSI (過熱感)
         delta = data['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
-        rsi = 100 - (100 / (1 + rs))
+        rsi = 100 - (100 / (1 + (gain / loss)))
         current_rsi = rsi.iloc[-1].item()
-
-        # 【判定条件】
-        # ① 本日ゴールデンクロス発生
-        is_gc = (ma25.iloc[-1].item() > ma75.iloc[-1].item()) and (ma25.iloc[-2].item() <= ma75.iloc[-2].item())
-        
-        # ② RSIが70未満（まだ過熱しすぎていない）
         is_not_overbought = current_rsi < 70
 
-        if is_gc and is_not_overbought:
-            target_list.append(f"★ {name} ({ticker})\n   └ RSI: {current_rsi:.1f} (割安度OK)")
+        # 3. 出来高フィルター (エネルギー)
+        # 本日の出来高が、過去5日間の平均出来高より20%以上多いか
+        avg_volume = data['Volume'].iloc[-6:-1].mean()
+        today_volume = data['Volume'].iloc[-1].item()
+        is_volume_spike = today_volume > (avg_volume * 1.2)
+
+        # 全条件合致！
+        if is_gc and is_not_overbought and is_volume_spike:
+            vol_ratio = (today_volume / avg_volume) * 100
+            target_list.append(f"🔥極選: {name} ({ticker})\n   ├ RSI: {current_rsi:.1f}\n   └ 出来高: 前日比{vol_ratio:.0f}%")
             
     except:
         continue
@@ -63,10 +64,9 @@ for ticker, name in name_map.items():
 now_str = datetime.now().strftime('%Y/%m/%d %H:%M')
 
 # 記録
-history_file = "history.md"
-with open(history_file, "a", encoding="utf-8") as f:
-    f.write(f"### {now_str}\n" + ("\n".join(target_list) if target_list else "条件合致なし") + "\n\n")
+with open("history.md", "a", encoding="utf-8") as f:
+    f.write(f"### {now_str}\n" + ("\n".join(target_list) if target_list else "特選銘柄なし") + "\n\n")
 
 # LINE送信
-msg = f"【🚀厳選：爆上予報】\n{now_str}\n\n" + ("\n".join(target_list) if target_list else "本日、条件に合う銘柄はありません。")
+msg = f"【🎯勝率重視：鉄板シグナル】\n{now_str}\n\n" + ("\n".join(target_list) if target_list else "現在、鉄板条件に合う銘柄はありません。")
 send_line(msg)
