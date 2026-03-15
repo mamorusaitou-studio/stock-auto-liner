@@ -69,22 +69,24 @@ for ticker, name in name_map.items():
         today_volume = data['Volume'].iloc[-1].item()
         vol_ratio = (today_volume / avg_volume) * 100
 
-        # 全条件合致！
         if is_gc and (current_rsi < 70) and (vol_ratio >= 120):
             rsi_comment = "最高！" if current_rsi <= 55 else "勢いアリ"
             vol_comment = "本気買い" if vol_ratio >= 200 else "注目増"
             
-            # LINE用
             target_list_line.append(f"🔥【極選】{name} ({ticker})\n   ├ RSI: {current_rsi:.1f} ({rsi_comment})\n   └ 出来高: {vol_ratio:.0f}% ({vol_comment})")
-            # スプシ用 (日付, 名前, コード, RSI, 出来高)
             target_list_sheet.append([now_str, name, ticker, round(current_rsi, 1), f"{vol_ratio:.0f}%"])
             
     except:
         continue
 
+# スプレッドシートのURLを作成
+ss_url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/edit"
+
 # 記録・送信
 if target_list_sheet:
     update_spreadsheet(target_list_sheet)
+    msg = f"【🎯お宝：スプシ記帳完了】\n{now_str}\n\n" + "\n".join(target_list_line) + f"\n\n📊詳細データはこちら:\n{ss_url}"
+else:
+    msg = f"【🎯鉄板シグナル判定】\n{now_str}\n\n本日、鉄板条件に合う銘柄はありませんでした。"
 
-msg = f"【🎯お宝：スプシ記帳完了】\n{now_str}\n\n" + ("\n".join(target_list_line) if target_list_line else "条件合致なし")
 send_line(msg)
