@@ -1,14 +1,19 @@
-name: Daily Stock Scan
+name: Daily Stock Scan with History
 
 on:
   schedule:
-    # 毎日 日本時間 16:00 (世界標準時 07:00) に実行
+    # 毎日 日本時間 16:00
     - cron: '0 7 * * *'
-  workflow_dispatch: # ボタンでいつでも手動実行できる設定
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    # --- ここが「許可証（権限）」です ---
+    permissions:
+      contents: write
+    # ---------------------------------
+      
     steps:
       - uses: actions/checkout@v3
       
@@ -26,3 +31,12 @@ jobs:
           LINE_TOKEN: ${{ secrets.LINE_TOKEN }}
           USER_ID: ${{ secrets.USER_ID }}
         run: python main.py
+
+      # --- ここが「履歴を保存しろ」という命令です ---
+      - name: Commit and Push changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add history.md
+          git commit -m "Add scan history [skip ci]" || exit 0
+          git push
