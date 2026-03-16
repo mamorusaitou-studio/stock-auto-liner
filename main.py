@@ -21,6 +21,23 @@ def send_line(message):
     data = {"to": USER_ID, "messages": [{"type": "text", "text": message}]}
     requests.post(url, headers=headers, data=json.dumps(data))
 
+def get_index_performance():
+    """指数の騰落率を取得"""
+    indices = {"^N225": "日経平均", "^TOPX": "TOPIX"}
+    perf_text = "【📊市場概況】\n"
+    for ticker, name in indices.items():
+        try:
+            idx_data = yf.download(ticker, period="2d", progress=False)
+            if len(idx_data) >= 2:
+                close_now = idx_data['Close'].iloc[-1].item()
+                close_prev = idx_data['Close'].iloc[-2].item()
+                diff = ((close_now - close_prev) / close_prev) * 100
+                mark = "🔺" if diff >= 0 else "🔹"
+                perf_text += f"{mark}{name}: {diff:+.2f}%\n"
+        except:
+            perf_text += f"⚠️{name}: 取得失敗\n"
+    return perf_text
+
 def update_spreadsheet(data_list):
     if not data_list: return
     try:
@@ -28,15 +45,13 @@ def update_spreadsheet(data_list):
         credentials = Credentials.from_service_account_info(json.loads(GCP_JSON), scopes=scopes)
         gc = gspread.authorize(credentials)
         sh = gc.open_by_key(SPREADSHEET_ID)
-        try:
-            worksheet = sh.worksheet("国内株")
-        except:
-            worksheet = sh.get_worksheet(0)
+        try: worksheet = sh.worksheet("国内株")
+        except: worksheet = sh.get_worksheet(0)
         worksheet.append_rows(data_list)
     except Exception as e:
         print(f"Spreadsheet Error: {e}")
 
-# ターゲットリスト取得 (TOPIX 500)
+# 銘柄リスト取得
 name_map = {}
 try:
     urls = ["https://ja.wikipedia.org/wiki/TOPIX_Core30", "https://ja.wikipedia.org/wiki/TOPIX_Large70", "https://ja.wikipedia.org/wiki/TOPIX_Mid400"]
@@ -52,11 +67,12 @@ try:
 except:
     name_map = {"8306.T": "三菱UFJ", "7203.T": "トヨタ"}
 
+index_summary = get_index_performance()
 target_list_line = []
 target_list_sheet = []
 now_str = datetime.now().strftime('%Y/%m/%d %H:%M')
 
-print("国内株スキャンの実行中...")
+print("国内株スキャン開始...")
 for ticker, name in name_map.items():
     try:
         data = yf.download(ticker, period="8mo", progress=False)
@@ -74,19 +90,16 @@ for ticker, name in name_map.items():
         vol_ratio = (today_volume / avg_volume) * 100
 
         if is_gc and (current_rsi < 70) and (vol_ratio >= 120):
-            target_list_line.append(f"🔥【500特選】{name} ({ticker})\n   ├ RSI: {current_rsi:.1f}\n   └ 出来高: {vol_ratio:.0f}%")
+            target_list_line.append(f"🔥{name} ({ticker})\n   RSI:{current_rsi:.1f} 出来高:{vol_ratio:.0f}%")
             target_list_sheet.append([now_str, name, ticker, round(current_rsi, 1), f"{vol_ratio:.0f}%"])
         time.sleep(0.05)
-    except:
-        continue
+    except: continue
 
 ss_url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/edit"
 if target_list_sheet:
     update_spreadsheet(target_list_sheet)
-    summary = "\n".join(target_list_line[:8])
-    msg = f"【🎯国内株：スキャン完了】\n{now_str}\n\n{summary}\n\n📊スプシを確認:\n{ss_url}"
+    msg = f"【🎯国内：チャンス到来】\n{now_str}\n\n{index_summary}\n\n" + "\n".join(target_list_line[:8]) + f"\n\n📊詳細:\n{ss_url}"
 else:
-    # 条件合致なしでもLINEを送る設定
-    msg = f"【🍵国内株：スキャン完了】\n{now_str}\n\n本日、500銘柄の中に条件合致はありませんでした。平和な相場です。"
+    msg = f"【🍵国内：定期報告】\n{now_str}\n\n{index_summary}\n条件に合う個別銘柄はありませんでした。"
 
 send_line(msg)
