@@ -28,14 +28,10 @@ def update_spreadsheet(data_list):
         credentials = Credentials.from_service_account_info(json.loads(GCP_JSON), scopes=scopes)
         gc = gspread.authorize(credentials)
         sh = gc.open_by_key(SPREADSHEET_ID)
-        
-        # 【ここを修正】「国内株」という名前のシートに書き込む
         try:
             worksheet = sh.worksheet("国内株")
         except:
-            # もし「国内株」という名前がなければ、一番左のシートに書く
             worksheet = sh.get_worksheet(0)
-            
         worksheet.append_rows(data_list)
     except Exception as e:
         print(f"Spreadsheet Error: {e}")
@@ -43,11 +39,7 @@ def update_spreadsheet(data_list):
 # ターゲットリスト取得 (TOPIX 500)
 name_map = {}
 try:
-    urls = [
-        "https://ja.wikipedia.org/wiki/TOPIX_Core30",
-        "https://ja.wikipedia.org/wiki/TOPIX_Large70",
-        "https://ja.wikipedia.org/wiki/TOPIX_Mid400"
-    ]
+    urls = ["https://ja.wikipedia.org/wiki/TOPIX_Core30", "https://ja.wikipedia.org/wiki/TOPIX_Large70", "https://ja.wikipedia.org/wiki/TOPIX_Mid400"]
     for url in urls:
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req) as response:
@@ -64,8 +56,7 @@ target_list_line = []
 target_list_sheet = []
 now_str = datetime.now().strftime('%Y/%m/%d %H:%M')
 
-print(f"国内株スキャン開始...")
-
+print("国内株スキャンの実行中...")
 for ticker, name in name_map.items():
     try:
         data = yf.download(ticker, period="8mo", progress=False)
@@ -90,12 +81,12 @@ for ticker, name in name_map.items():
         continue
 
 ss_url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/edit"
-
 if target_list_sheet:
     update_spreadsheet(target_list_sheet)
     summary = "\n".join(target_list_line[:8])
-    msg = f"【🎯国内株：スキャン完了】\n{now_str}\n\n{summary}\n\n📊スプシで確認:\n{ss_url}"
+    msg = f"【🎯国内株：スキャン完了】\n{now_str}\n\n{summary}\n\n📊スプシを確認:\n{ss_url}"
 else:
-    msg = f"【🎯国内株スキャン】\n{now_str}\n\n条件に合う銘柄はありませんでした。"
+    # 条件合致なしでもLINEを送る設定
+    msg = f"【🍵国内株：スキャン完了】\n{now_str}\n\n本日、500銘柄の中に条件合致はありませんでした。平和な相場です。"
 
 send_line(msg)
