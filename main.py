@@ -22,24 +22,26 @@ def send_line(message):
     requests.post(url, headers=headers, data=json.dumps(data))
 
 def get_jp_market_summary():
-    # 日本市場の重要指標（コードをより安定したものに修正）
+    # コードをより確実に取得できる形式に変更
     indices = {
         "^N225": ("日経平均", "日本を代表する225社の平均値。"),
-        "^TOPX": ("TOPIX", "東証全体の動き。市場の地合いを表す。"),
+        "^TOPX": ("TOPIX", "市場の地合いを表す（東証全体）。"),
         "^MOSS": ("グロース250", "新興市場。個人投資家の意欲を映す。"),
-        "^TREIT": ("東証REIT", "不動産市場。金利上昇には弱い。"),
-        "^JNIV": ("日経VIX", "恐怖指数。25を超えるとパニック警戒。")
+        "1343.T": ("東証REIT", "不動産市場。分配金利回りが注目点。"),
+        "^JNIV": ("日経VIX", "恐怖指数。25超えでパニック警戒。")
     }
     
     perf_text = "【📊国内市場・指数解説】\n"
     
     for ticker, (name, desc) in indices.items():
         try:
-            # 安定して2日分取得するための設定
-            idx_data = yf.download(ticker, period="5d", progress=False)
-            if len(idx_data) >= 2:
-                close_now = idx_data['Close'].iloc[-1].item()
-                close_prev = idx_data['Close'].iloc[-2].item()
+            # 期間を1ヶ月分(1mo)に広げて、確実に直近2日分の終値を取る
+            idx_data = yf.download(ticker, period="1mo", progress=False)
+            if not idx_data.empty and len(idx_data) >= 2:
+                # 終値列を抽出し、最新2日分を取得
+                closes = idx_data['Close'].dropna()
+                close_now = closes.iloc[-1].item()
+                close_prev = closes.iloc[-2].item()
                 diff = ((close_now - close_prev) / close_prev) * 100
                 
                 mark = "📈" if diff >= 0 else "📉"
@@ -49,17 +51,17 @@ def get_jp_market_summary():
                 perf_text += f"{mark}{name}: {diff:+.2f}%\n"
                 
                 if name == "日経VIX":
-                    if close_now < 20: status = "✅相場は平穏。個別株を攻めやすい。"
-                    elif 20 <= close_now < 25: status = "🟡やや荒れ模様。急落に注意。"
-                    else: status = "🚨リスク回避。キャッシュ比率アップを。"
+                    if close_now < 20: status = "✅平穏。個別株を攻めやすい。"
+                    elif 20 <= close_now < 25: status = "🟡やや荒れ。急落に注意。"
+                    else: status = "🚨警戒。キャッシュ比率アップを。"
                     perf_text += f"   └{status}\n"
                 else:
                     view = "好調" if diff > 0.5 else "軟調" if diff < -0.5 else "横ばい"
                     perf_text += f"   └{desc}({view})\n"
             else:
-                perf_text += f"⚠️{name}: データ不足\n"
-        except:
-            perf_text += f"⚠️{name}: 取得失敗\n"
+                perf_text += f"⚠️{name}: 取得待機中(市場休止等)\n"
+        except Exception as e:
+            perf_text += f"⚠️{name}: 取得エラー\n"
             
     return perf_text
 
@@ -76,7 +78,7 @@ def update_spreadsheet(data_list):
     except Exception as e:
         print(f"Spreadsheet Error: {e}")
 
-# 銘柄リスト取得 (TOPIX 500)
+# ターゲットリスト取得
 name_map = {}
 try:
     urls = ["https://ja.wikipedia.org/wiki/TOPIX_Core30", "https://ja.wikipedia.org/wiki/TOPIX_Large70", "https://ja.wikipedia.org/wiki/TOPIX_Mid400"]
