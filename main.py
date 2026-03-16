@@ -22,44 +22,42 @@ def send_line(message):
     requests.post(url, headers=headers, data=json.dumps(data))
 
 def get_jp_market_summary():
-    # 日本市場の重要指標：日経平均、TOPIX、グロース250、REIT、日本版VIX
+    # 日本市場の重要指標（コードをより安定したものに修正）
     indices = {
-        "^N225": ("日経平均", "日本を代表する225社の動き。"),
-        "^TOPX": ("TOPIX", "日本市場全体の底堅さを表す。"),
-        "^MOSS": ("グロース250", "新興・個人投資家の熱量を表す。"),
-        "^TREIT": ("東証REIT", "不動産市況。金利動向に敏感。"),
-        "^JNIV": ("日経VIX", "日本版恐怖指数。25超えは警戒。")
+        "^N225": ("日経平均", "日本を代表する225社の平均値。"),
+        "^TOPX": ("TOPIX", "東証全体の動き。市場の地合いを表す。"),
+        "^MOSS": ("グロース250", "新興市場。個人投資家の意欲を映す。"),
+        "^TREIT": ("東証REIT", "不動産市場。金利上昇には弱い。"),
+        "^JNIV": ("日経VIX", "恐怖指数。25を超えるとパニック警戒。")
     }
     
     perf_text = "【📊国内市場・指数解説】\n"
     
     for ticker, (name, desc) in indices.items():
         try:
-            idx_data = yf.download(ticker, period="2d", progress=False)
+            # 安定して2日分取得するための設定
+            idx_data = yf.download(ticker, period="5d", progress=False)
             if len(idx_data) >= 2:
                 close_now = idx_data['Close'].iloc[-1].item()
                 close_prev = idx_data['Close'].iloc[-2].item()
                 diff = ((close_now - close_prev) / close_prev) * 100
                 
-                # 騰落による絵文字
                 mark = "📈" if diff >= 0 else "📉"
                 if name == "日経VIX":
                     mark = "🛡️" if diff < 0 else "⚠️"
                 
                 perf_text += f"{mark}{name}: {diff:+.2f}%\n"
                 
-                # 日経VIXに基づく市況判定
                 if name == "日経VIX":
-                    if close_now < 20:
-                        status = "✅相場は平穏。個別株を攻めやすい。"
-                    elif 20 <= close_now < 25:
-                        status = "🟡やや荒れ模様。急落に注意。"
-                    else:
-                        status = "🚨リスク回避。キャッシュ比率アップを。"
+                    if close_now < 20: status = "✅相場は平穏。個別株を攻めやすい。"
+                    elif 20 <= close_now < 25: status = "🟡やや荒れ模様。急落に注意。"
+                    else: status = "🚨リスク回避。キャッシュ比率アップを。"
                     perf_text += f"   └{status}\n"
                 else:
                     view = "好調" if diff > 0.5 else "軟調" if diff < -0.5 else "横ばい"
                     perf_text += f"   └{desc}({view})\n"
+            else:
+                perf_text += f"⚠️{name}: データ不足\n"
         except:
             perf_text += f"⚠️{name}: 取得失敗\n"
             
