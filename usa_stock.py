@@ -20,20 +20,48 @@ def send_line(message):
     data = {"to": USER_ID, "messages": [{"type": "text", "text": message}]}
     requests.post(url, headers=headers, data=json.dumps(data))
 
-def get_usa_index_performance():
-    indices = {"^GSPC": "S&P500", "^SOX": "SOX指数"}
-    perf_text = "【📊米国概況】\n"
-    for ticker, name in indices.items():
+def get_usa_market_summary():
+    indices = {
+        "^GSPC": ("S&P500", "米国株の体温計。主要500社の動き。"),
+        "^NDX": ("ナスダック100", "ハイテク・成長株の象徴(TQQQ元指数)"),
+        "^SOX": ("SOX指数", "半導体セクターの勢い(SOXL元指数)"),
+        "^RUT": ("ラッセル2000", "中小型株。景気への敏感さを表す。"),
+        "^VIX": ("VIX(恐怖指数)", "20超えで警戒、30超えはパニック。")
+    }
+    
+    perf_text = "【📊米国市場・指数解説】\n"
+    
+    for ticker, (name, desc) in indices.items():
         try:
             idx_data = yf.download(ticker, period="2d", progress=False)
             if len(idx_data) >= 2:
                 close_now = idx_data['Close'].iloc[-1].item()
                 close_prev = idx_data['Close'].iloc[-2].item()
                 diff = ((close_now - close_prev) / close_prev) * 100
-                mark = "🇺🇸" if diff >= 0 else "📉"
+                
+                # 騰落による絵文字
+                mark = "📈" if diff >= 0 else "📉"
+                if name == "VIX(恐怖指数)":
+                    mark = "🛡️" if diff < 0 else "⚠️"
+                
                 perf_text += f"{mark}{name}: {diff:+.2f}%\n"
+                
+                # VIXに基づく市況判定
+                if name == "VIX(恐怖指数)":
+                    if close_now < 20:
+                        status = "✅相場は安定。強気の買い検討可。"
+                    elif 20 <= close_now < 30:
+                        status = "🟡不透明感。慎重な取引を。"
+                    else:
+                        status = "🚨パニック状態。静観推奨。"
+                    perf_text += f"   └{status}\n"
+                else:
+                    # その他の指数の簡易市況
+                    view = "好調" if diff > 0.5 else "軟調" if diff < -0.5 else "横ばい"
+                    perf_text += f"   └{desc}({view})\n"
         except:
             perf_text += f"⚠️{name}: 取得失敗\n"
+            
     return perf_text
 
 def update_spreadsheet(data_list):
@@ -49,14 +77,15 @@ def update_spreadsheet(data_list):
     except Exception as e:
         print(f"Spreadsheet Error: {e}")
 
+# 監視個別銘柄
 usa_stocks = {"SOXL": "半導体ブル3倍", "SOXS": "半導体ベア3倍", "TQQQ": "ナス100ブル3倍", "NVDA": "エヌビディア", "TSLA": "テスラ", "AAPL": "アップル"}
 
-index_summary = get_usa_index_performance()
+index_summary = get_usa_market_summary()
 target_list_line = []
 target_list_sheet = []
 now_str = datetime.now().strftime('%Y/%m/%d %H:%M')
 
-print("米国株スキャンの実行中...")
+print("米国株スキャン開始...")
 for ticker, name in usa_stocks.items():
     try:
         data = yf.download(ticker, period="8mo", progress=False)
@@ -64,24 +93,25 @@ for ticker, name in usa_stocks.items():
         ma25 = data['Close'].rolling(window=25).mean()
         ma75 = data['Close'].rolling(window=75).mean()
         is_gc = (ma25.iloc[-1].item() > ma75.iloc[-1].item()) and (ma25.iloc[-2].item() <= ma75.iloc[-2].item())
+        
         delta = data['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rsi = 100 - (100 / (1 + (gain / loss)))
         current_rsi = rsi.iloc[-1].item()
+        
         avg_volume = data['Volume'].iloc[-6:-1].mean()
         today_volume = data['Volume'].iloc[-1].item()
         vol_ratio = (today_volume / avg_volume) * 100
 
         if is_gc and (current_rsi < 75) and (vol_ratio >= 110):
-            target_list_line.append(f"🚀{name} ({ticker})\n   RSI:{current_rsi:.1f} 出来高:{vol_ratio:.0f}%")
+            target_list_line.append(f"🚀{name}({ticker}) RSI:{current_rsi:.1f} 出来高:{vol_ratio:.0f}%")
             target_list_sheet.append([now_str, name, ticker, round(current_rsi, 1), f"{vol_ratio:.0f}%"])
     except: continue
 
 if target_list_sheet:
     update_spreadsheet(target_list_sheet)
-    ss_url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/edit"
-    msg = f"【🚀米国：チャンス到来】\n{now_str}\n\n{index_summary}\n\n" + "\n".join(target_list_line) + f"\n\n📊詳細:\n{ss_url}"
+    msg = f"【🚀米国：チャンス到来】\n{now_str}\n\n{index_summary}\n\n" + "\n".join(target_list_line) + f"\n\n📊スプシ:\nhttps://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/edit"
     send_line(msg)
 else:
-    send_line(f"【🇺🇸米国：定期報告】\n{now_str}\n\n{index_summary}\nチャンス銘柄はありません。")
+    send_line(f"【🇺🇸米国：定期報告】\n{now_str}\n\n{index_summary}\n条件合致の個別銘柄はありません。")
