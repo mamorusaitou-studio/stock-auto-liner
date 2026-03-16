@@ -20,6 +20,22 @@ def send_line(message):
     data = {"to": USER_ID, "messages": [{"type": "text", "text": message}]}
     requests.post(url, headers=headers, data=json.dumps(data))
 
+def get_usa_index_performance():
+    indices = {"^GSPC": "S&P500", "^SOX": "SOX指数"}
+    perf_text = "【📊米国概況】\n"
+    for ticker, name in indices.items():
+        try:
+            idx_data = yf.download(ticker, period="2d", progress=False)
+            if len(idx_data) >= 2:
+                close_now = idx_data['Close'].iloc[-1].item()
+                close_prev = idx_data['Close'].iloc[-2].item()
+                diff = ((close_now - close_prev) / close_prev) * 100
+                mark = "🇺🇸" if diff >= 0 else "📉"
+                perf_text += f"{mark}{name}: {diff:+.2f}%\n"
+        except:
+            perf_text += f"⚠️{name}: 取得失敗\n"
+    return perf_text
+
 def update_spreadsheet(data_list):
     if not data_list: return
     try:
@@ -27,16 +43,15 @@ def update_spreadsheet(data_list):
         credentials = Credentials.from_service_account_info(json.loads(GCP_JSON), scopes=scopes)
         gc = gspread.authorize(credentials)
         sh = gc.open_by_key(SPREADSHEET_ID)
-        try:
-            worksheet = sh.worksheet("米国株")
-        except:
-            worksheet = sh.get_worksheet(0)
+        try: worksheet = sh.worksheet("米国株")
+        except: worksheet = sh.get_worksheet(0)
         worksheet.append_rows(data_list)
     except Exception as e:
         print(f"Spreadsheet Error: {e}")
 
-usa_stocks = {"SOXL": "半導体ブル3倍", "SOXS": "半導体ベア3倍", "TQQQ": "ナスダック100ブル3倍", "SQQQ": "ナスダック100ベア3倍", "NVDA": "エヌビディア", "TSLA": "テスラ", "AAPL": "アップル", "AMZN": "アマゾン", "META": "メタ", "GOOGL": "グーグル", "MSFT": "マイクロソフト", "TSM": "TSMC"}
+usa_stocks = {"SOXL": "半導体ブル3倍", "SOXS": "半導体ベア3倍", "TQQQ": "ナス100ブル3倍", "NVDA": "エヌビディア", "TSLA": "テスラ", "AAPL": "アップル"}
 
+index_summary = get_usa_index_performance()
 target_list_line = []
 target_list_sheet = []
 now_str = datetime.now().strftime('%Y/%m/%d %H:%M')
@@ -59,16 +74,14 @@ for ticker, name in usa_stocks.items():
         vol_ratio = (today_volume / avg_volume) * 100
 
         if is_gc and (current_rsi < 75) and (vol_ratio >= 110):
-            target_list_line.append(f"🇺🇸【米国特選】{name} ({ticker})\n   ├ RSI: {current_rsi:.1f}\n   └ 出来高: {vol_ratio:.0f}%")
+            target_list_line.append(f"🚀{name} ({ticker})\n   RSI:{current_rsi:.1f} 出来高:{vol_ratio:.0f}%")
             target_list_sheet.append([now_str, name, ticker, round(current_rsi, 1), f"{vol_ratio:.0f}%"])
-    except:
-        continue
+    except: continue
 
 if target_list_sheet:
     update_spreadsheet(target_list_sheet)
     ss_url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/edit"
-    msg = f"【🚀米国株：チャンス到来】\n{now_str}\n\n" + "\n".join(target_list_line) + f"\n\n📊スプシを確認:\n{ss_url}"
+    msg = f"【🚀米国：チャンス到来】\n{now_str}\n\n{index_summary}\n\n" + "\n".join(target_list_line) + f"\n\n📊詳細:\n{ss_url}"
     send_line(msg)
 else:
-    # 条件合致なしでもLINEを送る設定
-    send_line(f"【🇺🇸米国株：スキャン完了】\n{now_str}\n\n現在、条件に合う銘柄はありません。ゆっくり休みましょう。")
+    send_line(f"【🇺🇸米国：定期報告】\n{now_str}\n\n{index_summary}\nチャンス銘柄はありません。")
