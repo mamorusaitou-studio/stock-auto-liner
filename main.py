@@ -21,21 +21,48 @@ def send_line(message):
     data = {"to": USER_ID, "messages": [{"type": "text", "text": message}]}
     requests.post(url, headers=headers, data=json.dumps(data))
 
-def get_index_performance():
-    """指数の騰落率を取得"""
-    indices = {"^N225": "日経平均", "^TOPX": "TOPIX"}
-    perf_text = "【📊市場概況】\n"
-    for ticker, name in indices.items():
+def get_jp_market_summary():
+    # 日本市場の重要指標：日経平均、TOPIX、グロース250、REIT、日本版VIX
+    indices = {
+        "^N225": ("日経平均", "日本を代表する225社の動き。"),
+        "^TOPX": ("TOPIX", "日本市場全体の底堅さを表す。"),
+        "^MOSS": ("グロース250", "新興・個人投資家の熱量を表す。"),
+        "^TREIT": ("東証REIT", "不動産市況。金利動向に敏感。"),
+        "^JNIV": ("日経VIX", "日本版恐怖指数。25超えは警戒。")
+    }
+    
+    perf_text = "【📊国内市場・指数解説】\n"
+    
+    for ticker, (name, desc) in indices.items():
         try:
             idx_data = yf.download(ticker, period="2d", progress=False)
             if len(idx_data) >= 2:
                 close_now = idx_data['Close'].iloc[-1].item()
                 close_prev = idx_data['Close'].iloc[-2].item()
                 diff = ((close_now - close_prev) / close_prev) * 100
-                mark = "🔺" if diff >= 0 else "🔹"
+                
+                # 騰落による絵文字
+                mark = "📈" if diff >= 0 else "📉"
+                if name == "日経VIX":
+                    mark = "🛡️" if diff < 0 else "⚠️"
+                
                 perf_text += f"{mark}{name}: {diff:+.2f}%\n"
+                
+                # 日経VIXに基づく市況判定
+                if name == "日経VIX":
+                    if close_now < 20:
+                        status = "✅相場は平穏。個別株を攻めやすい。"
+                    elif 20 <= close_now < 25:
+                        status = "🟡やや荒れ模様。急落に注意。"
+                    else:
+                        status = "🚨リスク回避。キャッシュ比率アップを。"
+                    perf_text += f"   └{status}\n"
+                else:
+                    view = "好調" if diff > 0.5 else "軟調" if diff < -0.5 else "横ばい"
+                    perf_text += f"   └{desc}({view})\n"
         except:
             perf_text += f"⚠️{name}: 取得失敗\n"
+            
     return perf_text
 
 def update_spreadsheet(data_list):
@@ -51,7 +78,7 @@ def update_spreadsheet(data_list):
     except Exception as e:
         print(f"Spreadsheet Error: {e}")
 
-# 銘柄リスト取得
+# 銘柄リスト取得 (TOPIX 500)
 name_map = {}
 try:
     urls = ["https://ja.wikipedia.org/wiki/TOPIX_Core30", "https://ja.wikipedia.org/wiki/TOPIX_Large70", "https://ja.wikipedia.org/wiki/TOPIX_Mid400"]
@@ -67,7 +94,7 @@ try:
 except:
     name_map = {"8306.T": "三菱UFJ", "7203.T": "トヨタ"}
 
-index_summary = get_index_performance()
+index_summary = get_jp_market_summary()
 target_list_line = []
 target_list_sheet = []
 now_str = datetime.now().strftime('%Y/%m/%d %H:%M')
@@ -80,17 +107,19 @@ for ticker, name in name_map.items():
         ma25 = data['Close'].rolling(window=25).mean()
         ma75 = data['Close'].rolling(window=75).mean()
         is_gc = (ma25.iloc[-1].item() > ma75.iloc[-1].item()) and (ma25.iloc[-2].item() <= ma75.iloc[-2].item())
+        
         delta = data['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rsi = 100 - (100 / (1 + (gain / loss)))
         current_rsi = rsi.iloc[-1].item()
+        
         avg_volume = data['Volume'].iloc[-6:-1].mean()
         today_volume = data['Volume'].iloc[-1].item()
         vol_ratio = (today_volume / avg_volume) * 100
 
         if is_gc and (current_rsi < 70) and (vol_ratio >= 120):
-            target_list_line.append(f"🔥{name} ({ticker})\n   RSI:{current_rsi:.1f} 出来高:{vol_ratio:.0f}%")
+            target_list_line.append(f"🔥{name}({ticker}) RSI:{current_rsi:.1f} 出来高:{vol_ratio:.0f}%")
             target_list_sheet.append([now_str, name, ticker, round(current_rsi, 1), f"{vol_ratio:.0f}%"])
         time.sleep(0.05)
     except: continue
@@ -98,8 +127,8 @@ for ticker, name in name_map.items():
 ss_url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/edit"
 if target_list_sheet:
     update_spreadsheet(target_list_sheet)
-    msg = f"【🎯国内：チャンス到来】\n{now_str}\n\n{index_summary}\n\n" + "\n".join(target_list_line[:8]) + f"\n\n📊詳細:\n{ss_url}"
+    msg = f"【🎯国内：チャンス到来】\n{now_str}\n\n{index_summary}\n\n" + "\n".join(target_list_line[:8]) + f"\n\n📊スプシ:\n{ss_url}"
 else:
-    msg = f"【🍵国内：定期報告】\n{now_str}\n\n{index_summary}\n条件に合う個別銘柄はありませんでした。"
+    msg = f"【🍵国内：定期報告】\n{now_str}\n\n{index_summary}\n個別銘柄に合致はありませんでした。"
 
 send_line(msg)
