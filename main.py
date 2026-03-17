@@ -9,7 +9,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 import time
 
-# 設定の読み込み
+# 設定
 LINE_TOKEN = os.environ.get("LINE_TOKEN")
 USER_ID = os.environ.get("USER_ID")
 SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
@@ -22,11 +22,11 @@ def send_line(message):
     requests.post(url, headers=headers, data=json.dumps(data))
 
 def get_jp_market_summary():
-    # 取得コードをさらに安定したものへ
+    # 取得コード。TOPIXなどは指数の代わりに関連ETFを使うと取得が安定します
     indices = {
         "^N225": ("日経平均", "日本を代表する225社の平均値。"),
-        "^TOPX": ("TOPIX", "市場の地合いを表す（東証全体）。"),
-        "^MOSS": ("グロース250", "新興市場。個人投資家の意欲を映す。"),
+        "1306.T": ("TOPIX", "市場の地合いを表す（東証全体）。"),
+        "2516.T": ("グロース250", "新興市場。個人投資家の意欲を映す。"),
         "1343.T": ("東証REIT", "不動産市場。分配金利回りが注目。"),
         "^JNIV": ("日経VIX", "恐怖指数。25超えでパニック警戒。")
     }
@@ -35,13 +35,12 @@ def get_jp_market_summary():
     
     for ticker, (name, desc) in indices.items():
         try:
-            # 1ヶ月分のデータを取って、後ろから有効な値を探す
+            # 1ヶ月分のデータを取って、空じゃない値を後ろから探す
             idx_data = yf.download(ticker, period="1mo", progress=False)
             if not idx_data.empty:
-                # 終値の列から空ではないデータを抽出
                 closes = idx_data['Close'].dropna()
                 if len(closes) >= 2:
-                    # 最新とその1つ前を取得
+                    # 最新と1つ前の終値を取得
                     close_now = closes.iloc[-1].item()
                     close_prev = closes.iloc[-2].item()
                     diff = ((close_now - close_prev) / close_prev) * 100
@@ -61,7 +60,7 @@ def get_jp_market_summary():
                         view = "好調" if diff > 0.5 else "軟調" if diff < -0.5 else "横ばい"
                         perf_text += f"   └{desc}({view})\n"
                 else:
-                    perf_text += f"⚠️{name}: データ準備中\n"
+                    perf_text += f"⚠️{name}: データ更新待ち\n"
             else:
                 perf_text += f"⚠️{name}: 取得不可\n"
         except:
@@ -69,8 +68,7 @@ def get_jp_market_summary():
             
     return perf_text
 
-# --- (以下、update_spreadsheet、銘柄スキャン部分は前と同じ) ---
-
+# (中略：update_spreadsheetなどはそのまま)
 def update_spreadsheet(data_list):
     if not data_list: return
     try:
@@ -104,7 +102,7 @@ target_list_line = []
 target_list_sheet = []
 now_str = datetime.now().strftime('%Y/%m/%d %H:%M')
 
-print("国内株スキャン開始...")
+print("国内株スキャン中...")
 for ticker, name in name_map.items():
     try:
         data = yf.download(ticker, period="8mo", progress=False)
