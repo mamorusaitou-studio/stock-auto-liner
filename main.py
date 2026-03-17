@@ -22,39 +22,39 @@ def send_line(message):
     requests.post(url, headers=headers, data=json.dumps(data))
 
 def get_jp_market_summary():
-    # 取得コード。TOPIXなどは指数の代わりに関連ETFを使うと取得が安定します
+    # 取得コード：指数そのものが不安定な場合はETF(1306, 2516, 2035)を参照
     indices = {
         "^N225": ("日経平均", "日本を代表する225社の平均値。"),
         "1306.T": ("TOPIX", "市場の地合いを表す（東証全体）。"),
         "2516.T": ("グロース250", "新興市場。個人投資家の意欲を映す。"),
         "1343.T": ("東証REIT", "不動産市場。分配金利回りが注目。"),
-        "^JNIV": ("日経VIX", "恐怖指数。25超えでパニック警戒。")
+        "2035.T": ("日経VIX", "恐怖指数。数値上昇でパニック警戒。")
     }
     
     perf_text = "【📊国内市場・指数解説】\n"
     
     for ticker, (name, desc) in indices.items():
         try:
-            # 1ヶ月分のデータを取って、空じゃない値を後ろから探す
+            # 日経VIX(2035.T)は価格そのものがボラティリティを表す
             idx_data = yf.download(ticker, period="1mo", progress=False)
             if not idx_data.empty:
                 closes = idx_data['Close'].dropna()
                 if len(closes) >= 2:
-                    # 最新と1つ前の終値を取得
                     close_now = closes.iloc[-1].item()
                     close_prev = closes.iloc[-2].item()
                     diff = ((close_now - close_prev) / close_prev) * 100
                     
                     mark = "📈" if diff >= 0 else "📉"
                     if name == "日経VIX":
-                        mark = "🛡️" if diff < 0 else "⚠️"
+                        # VIXは「上がるとヤバイ」ので絵文字を逆に
+                        mark = "⚠️" if diff > 0 else "🛡️"
                     
                     perf_text += f"{mark}{name}: {diff:+.2f}%\n"
                     
                     if name == "日経VIX":
-                        if close_now < 20: status = "✅平穏。個別株を攻めやすい。"
-                        elif 20 <= close_now < 25: status = "🟡やや荒れ。急落に注意。"
-                        else: status = "🚨警戒。キャッシュ比率アップを。"
+                        # 2035.Tの価格水準で判定（簡易版）
+                        if diff < 0: status = "✅相場は落ち着いています。"
+                        else: status = "🟡少し荒れ気味。慎重な判断を。"
                         perf_text += f"   └{status}\n"
                     else:
                         view = "好調" if diff > 0.5 else "軟調" if diff < -0.5 else "横ばい"
@@ -68,7 +68,7 @@ def get_jp_market_summary():
             
     return perf_text
 
-# (中略：update_spreadsheetなどはそのまま)
+# --- (update_spreadsheet, 銘柄スキャンのロジックは変更なし) ---
 def update_spreadsheet(data_list):
     if not data_list: return
     try:
