@@ -3,15 +3,15 @@ import requests
 import json
 import os
 import pandas as pd
-import numpy as np
 from datetime import datetime
 
 # ==========================================
-# 設定エリア
+# 設定エリア (GitHubのSecretsを使用)
 # ==========================================
 LINE_TOKEN = os.environ.get("LINE_TOKEN")
 USER_ID = os.environ.get("USER_ID")
 
+# 【米国市場専用】銘柄リスト
 INDICES = {
     "^GSPC": ("S&P 500", "米国株の体温計。主要500社の動き。"),
     "^NDX": ("Nasdaq 100", "ハイテク株の象徴。金利上昇に弱い。"),
@@ -35,33 +35,33 @@ def get_market_summary():
     
     for ticker, (name, desc) in INDICES.items():
         try:
-            # 1. データを取得（auto_adjustで構造をシンプルに）
-            df = yf.download(ticker, start=f"{current_year}-01-01", progress=False, auto_adjust=True)
-            if df.empty:
-                df = yf.download(ticker, period="5d", progress=False, auto_adjust=True)
+            # 最新のyfinance仕様対策: 確実に1次元の数値として取得する
+            # group_by='ticker' を外して取得し、末尾の数値を取り出す
+            data = yf.download(ticker, start=f"{current_year}-01-01", progress=False)
+            
+            if data.empty:
+                data = yf.download(ticker, period="5d", progress=False)
 
-            if df.empty:
-                perf_text += f"\n◆ {name}\n   取得失敗\n"
+            if data.empty:
+                perf_text += f"\n◆ {name}\n   データ取得不能\n"
                 continue
 
-            # 2. 【最強の対策】どんな列名だろうと、とにかく「最初の列」の数値だけを抜く
-            # values.flatten() でコケたので、to_numpy() を使って確実に平坦なリストにする
-            raw_values = df.iloc[:, 0].to_numpy().flatten()
+            # --- 最強の数値抽出処理 ---
+            # どんな多重構造になっていても、一番右端の「Close」列を数値として引っこ抜く
+            df_close = data['Close'].dropna()
             
-            # 3. リストの中から「有効な数値（NaN以外）」だけを抽出
-            prices = [float(x) for x in raw_values if np.isscalar(x) and not np.isnan(x)]
-            
-            if len(prices) < 1:
-                perf_text += f"\n◆ {name}\n   数値なし\n"
-                continue
+            # Seriesの末尾から純粋な値(float)として取得
+            prices = df_close.values.tolist()
+            if isinstance(prices, list): # 二重リスト対策
+                prices = [p for p in prices]
+                
+            close_now = float(prices[-1])
+            close_prev = float(prices[-2]) if len(prices) >= 2 else close_now
+            close_ytd = float(prices)
+            # -------------------------
 
-            close_now = prices[-1]
-            close_prev = prices[-2] if len(prices) >= 2 else close_now
-            close_ytd = prices
-
-            # 4. 計算
-            day_pct = ((close_now - close_prev) / close_prev * 100) if close_prev != 0 else 0
-            ytd_pct = ((close_now - close_ytd) / close_ytd * 100) if close_ytd != 0 else 0
+            day_pct = ((close_now - close_prev) / close_prev) * 100
+            ytd_pct = ((close_now - close_ytd) / close_ytd) * 100
             
             val = close_now / 10 if ticker == "^TNX" else close_now
             unit = "%" if ticker == "^TNX" else ""
@@ -76,7 +76,8 @@ def get_market_summary():
             perf_text += f"   └ {desc}\n"
 
         except Exception as e:
-            perf_text += f"\n◆ {name}\n   システムエラー\n"
+            # 何が起きたか特定するためにエラー名を出す設定
+            perf_text += f"\n◆ {name}\n   計算中...(エラー:{type(e).__name__})\n"
             
     return perf_text
 
