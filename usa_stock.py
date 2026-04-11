@@ -1,103 +1,71 @@
 import requests
-import json
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 
 # --- 設定 ---
 LINE_TOKEN = os.environ.get("LINE_TOKEN")
 USER_ID = os.environ.get("USER_ID")
 
 INDICES = {
-    "^GSPC": ("S&P 500", "米国株の体温計。"),
-    "^NDX": ("Nasdaq 100", "ハイテク株の象徴。"),
-    "^SOX": ("SOX指数", "半導体セクター。"),
-    "^RUT": ("ラッセル2000", "米国小型株。"),
-    "GC=F": ("ゴールド", "安全資産。"),
-    "CL=F": ("WTI原油", "エネルギー価格。"),
-    "^TNX": ("米国10年金利", "長期金利。"),
-    "^US2Y": ("米国2年金利", "短期金利。"),
-    "^VIX": ("VIX指数", "恐怖指数。")
+    "^GSPC": "S&P 500",
+    "^NDX": "Nasdaq 100",
+    "^SOX": "SOX指数",
+    "^RUT": "ラッセル2000",
+    "GC=F": "ゴールド",
+    "CL=F": "WTI原油",
+    "^TNX": "米国10年金利",
+    "^US2Y": "米国2年金利",
+    "^VIX": "VIX指数"
 }
 
-def get_finance_data(ticker):
+def get_data(ticker):
     try:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=1y&interval=1d"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        res = requests.get(url, headers=headers, timeout=10)
-        if res.status_code != 200: return None
-        
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=5d&interval=1d"
+        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
         data = res.json()
         
-        # ChatGPTの指摘通り、を指定してリストから辞書を取り出す（重要）
-        results = data.get('chart', {}).get('result', [])
-        if not results: return None
-        main_result = results 
+        # 確実に数字を取るための最短ルート
+        result = data['chart']['result']
+        prices = result['indicators']['quote']['close']
+        # Noneを除去
+        valid_prices = [p for p in prices if p is not None]
         
-        timestamps = main_result.get('timestamp', [])
-        indicators = main_result.get('indicators', {})
-        quote_list = indicators.get('quote', [])
-        
-        if not quote_list: return None
-        # ここもリストなので で辞書を取り出す
-        actual_data_dict = quote_list 
-        
-        prices = actual_data_dict.get('close', [])
-        
-        # 有効データ(None以外)のみ抽出
-        clean_data = [(t, p) for t, p in zip(timestamps, prices) if p is not None]
-        if len(clean_data) < 2: return None
-
-        now = clean_data[-1]
-        prev = clean_data[-2]
-        
-        # 年初来価格の特定
-        current_year = datetime.now(timezone.utc).year
-        ytd_val = now
-        for t, p in clean_data:
-            if datetime.fromtimestamp(t, tz=timezone.utc).year >= current_year:
-                ytd_val = p
-                break
-        return now, prev, ytd_val
+        if len(valid_prices) >= 2:
+            now = valid_prices[-1]
+            prev = valid_prices[-2]
+            return now, prev
+        return None
     except:
         return None
 
-def get_market_summary():
-    report_time = datetime.now().strftime('%Y/%m/%d %H:%M')
-    text = f"【🧭 米国市場レポート】\n{report_time}\n"
+def main():
+    report_time = datetime.now().strftime('%m/%d %H:%M')
+    msg = f"【🧭 米国市場】\n{report_time}\n"
     
-    success_count = 0
-    for ticker, (name, desc) in INDICES.items():
-        res = get_finance_data(ticker)
-        if not res:
-            text += f"\n◆ {name}\n   データ取得失敗\n"
-            continue
+    for ticker, name in INDICES.items():
+        res = get_data(ticker)
+        if res:
+            now, prev = res
+            diff = ((now - prev) / prev) * 100
             
-        success_count += 1
-        now, prev, ytd = res
-        day_pct = (now - prev) / prev * 100
-        ytd_pct = (now - ytd) / ytd * 100
+            # 表示調整
+            val = now
+            if ticker in ["^TNX", "^US2Y"] and val > 15: val /= 10
+            unit = "%" if ticker in ["^TNX", "^US2Y"] else ("pt" if ticker == "^VIX" else "")
+            
+            icon = "🚀" if diff > 0 else "💦"
+            if ticker == "^VIX": icon = "😱" if diff > 0 else "😌"
+            
+            msg += f"\n◆ {name}\n   {val:,.2f}{unit} ({icon} {diff:+.2f}%)"
         
-        val = now
-        if ticker in ["^TNX", "^US2Y"] and val > 15: val /= 10
-        unit = "pt" if ticker == "^VIX" else ("%" if ticker in ["^TNX", "^US2Y"] else "")
-        
-        # アイコン判定
-        is_warn = ticker in ["^TNX", "^US2Y", "^VIX"]
-        day_arrow = ("📈" if day_pct > 0 else "📉") if is_warn else ("🚀" if day_pct > 0 else "💦")
-        if ticker == "^VIX": day_arrow = "😱" if day_pct > 0 else "😌"
+        time.sleep(0.5)
 
-        text += f"\n◆ {name}\n"
-        text += f"   {val:,.2f}{unit} ({day_arrow} {day_pct:+.2f}%)\n"
-        text += f"   ┗ 年初来: {'🔥' if ytd_pct > 0 else '❄️'} {ytd_pct:+.2f}%\n"
-        time.sleep(0.3)
-
-    return text if success_count > 0 else None
-
-if __name__ == "__main__":
-    message = get_market_summary()
-    if message and LINE_TOKEN and USER_ID:
+    if LINE_TOKEN and USER_ID:
         url = "https://api.line.me/v2/bot/message/push"
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {LINE_TOKEN}"}
-        payload = {"to": USER_ID, "messages": [{"type": "text", "text": message}]}
+        payload = {"to": USER_ID, "messages": [{"type": "text", "text": msg}]}
         requests.post(url, headers=headers, json=payload, timeout=10)
+
+if __name__ == "__main__":
+    main()
