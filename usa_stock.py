@@ -34,18 +34,21 @@ def get_market_summary():
     
     for ticker, (name, desc) in INDICES.items():
         try:
-            # 安全のために「年初から今までの全データ」を一度に取得
-            df = yf.download(ticker, start=f"{current_year}-01-01", progress=False)
+            # 最新の仕様に合わせてデータをダウンロード
+            df = yf.download(ticker, start=f"{current_year}-01-01", progress=False, auto_adjust=True)
             
             if df.empty or len(df) < 1:
-                # 年初来がダメなら直近5日分でリトライ（前日比だけでも出す）
-                df = yf.download(ticker, period="5d", progress=False)
+                df = yf.download(ticker, period="5d", progress=False, auto_adjust=True)
 
             if df.empty:
                 perf_text += f"\n◆ {name}\n   データ取得不能\n"
                 continue
 
-            # 価格の抽出
+            # 【重要】yfinanceのマルチインデックス対策（平坦化）
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+
+            # 確実に数値として取得
             close_now = float(df['Close'].iloc[-1])
             
             # 前日比の計算
@@ -57,13 +60,10 @@ def get_market_summary():
                 day_arrow = "🚀" if day_pct > 0 else "💦"
                 if ticker == "^TNX": day_arrow = "📈" if day_pct > 0 else "📉"
 
-            # 年初来の計算（データがある場合のみ）
-            ytd_text = ""
-            if len(df) >= 1:
-                close_ytd = float(df['Close'].iloc)
-                ytd_pct = ((close_now - close_ytd) / close_ytd) * 100
-                ytd_arrow = "🔥" if ytd_pct > 0 else "❄️"
-                ytd_text = f"   ┗ 年初来: {ytd_arrow} {ytd_pct:+.2f}%\n"
+            # 年初来の計算
+            close_ytd = float(df['Close'].iloc)
+            ytd_pct = ((close_now - close_ytd) / close_ytd) * 100
+            ytd_arrow = "🔥" if ytd_pct > 0 else "❄️"
 
             # 表示調整（金利）
             val = close_now / 10 if ticker == "^TNX" else close_now
@@ -71,13 +71,17 @@ def get_market_summary():
 
             perf_text += f"\n◆ {name}\n"
             perf_text += f"   {val:.2f}{unit} ({day_arrow} {day_pct:+.2f}%)\n"
-            perf_text += ytd_text
+            perf_text += f"   ┗ 年初来: {ytd_arrow} {ytd_pct:+.2f}%\n"
             perf_text += f"   └ {desc}\n"
 
-        except Exception:
-            perf_text += f"\n◆ {name}\n   計算エラー\n"
+        except Exception as e:
+            # 何が起きたか特定するためにエラー内容を少し出す
+            perf_text += f"\n◆ {name}\n   計算エラー({type(e).__name__})\n"
             
     return perf_text
+
+# エラー対策で pandas もインポート
+import pandas as pd
 
 if __name__ == "__main__":
     message = get_market_summary()
