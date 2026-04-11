@@ -15,7 +15,6 @@ INDICES = {
     "GC=F": "ゴールド",
     "CL=F": "WTI原油",
     "^TNX": "米国10年金利",
-    "^US2Y": "米国2年金利",
     "^VIX": "VIX指数"
 }
 
@@ -25,16 +24,18 @@ def get_data(ticker):
         res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
         data = res.json()
         
-        # 【修正の核心】リスト を確実に指定して皮を剥く
-        result_list = data['chart']['result']
-        if not result_list: return None
+        # --- 階層を1段ずつ、リストを使って確実に掘る ---
+        chart = data.get('chart', {})
+        res_list = chart.get('result')
+        if not res_list: return None
         
-        main_data = result_list
-        indicators = main_data['indicators']
-        quote_list = indicators['quote']
+        main_data = res_list # ここがリスト
+        indicators = main_data.get('indicators', {})
+        quote_list = indicators.get('quote', [])
+        if not quote_list: return None
         
-        # quoteもリストなので を指定
-        prices = quote_list['close']
+        actual_quote = quote_list # ここもリスト
+        prices = actual_quote.get('close', [])
         
         # 有効な数字のみ
         valid_prices = [p for p in prices if p is not None]
@@ -56,14 +57,17 @@ def main():
         if res:
             now, prev = res
             diff = ((now - prev) / prev) * 100
+            
+            # 金利の表示調整
             val = now
-            if ticker in ["^TNX", "^US2Y"] and val > 15: val /= 10
+            if ticker == "^TNX" and val > 15: val /= 10
+            unit = "%" if ticker == "^TNX" else ("pt" if ticker == "^VIX" else "")
             
             # アイコン
             icon = "🚀" if diff > 0 else "💦"
             if ticker == "^VIX": icon = "😱" if diff > 0 else "😌"
             
-            msg += f"\n◆ {name}\n   {val:,.2f} ({icon} {diff:+.2f}%)"
+            msg += f"\n◆ {name}\n   {val:,.2f}{unit} ({icon} {diff:+.2f}%)"
             count += 1
         time.sleep(0.3)
 
