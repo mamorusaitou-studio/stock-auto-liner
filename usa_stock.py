@@ -16,7 +16,7 @@ INDICES = {
     "^GSPC": ("S&P 500", "米国株の体温計。"),
     "^NDX": ("Nasdaq 100", "ハイテク株の象徴。"),
     "^SOX": ("SOX指数", "半導体セクター。"),
-    "^RUT": ("ラッセル2000", "米国小型株。"),
+    "^RUT": ("ラッセル2000", "小型株。"),
     "GC=F": ("ゴールド", "安全資産。"),
     "CL=F": ("WTI原油", "エネルギー価格。"),
     "^TNX": ("米国10年金利", "長期金利。"),
@@ -37,19 +37,24 @@ def get_market_summary():
     
     for ticker, (name, desc) in INDICES.items():
         try:
-            # 1つずつ個別にダウンロードし、余計な層を排除
+            # 1. 1銘柄ずつ個別に、生データに近い形式でダウンロード
             df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
             
             if df.empty:
                 perf_text += f"\n◆ {name}\n   データ取得不能\n"
                 continue
 
-            # --- 【決定的な修正】 ---
-            # yfinanceが銘柄名ラベルを付けてこようが、
-            # .to_numpy() ですべてのラベルを剥ぎ取り、純粋な数値配列に変換する。
-            # そして flatten() で1次元に直し、NaN（空）を除去。
-            raw_data = df['Close'].to_numpy().flatten()
-            prices = [float(x) for x in raw_data if np.isscalar(x) and not np.isnan(x)]
+            # 2. 【ここが最重要】
+            # 表形式（DataFrame）を .to_numpy() で完全に「ただの数字の塊」に分解します。
+            # これにより、TypeError の原因だった「銘柄名ラベル」を物理的に消滅させます。
+            # 終値（Close）の列を狙い撃ちし、flatten（平坦化）してリスト化します。
+            
+            # Close列が存在するかチェックし、無ければ一番右端を代用
+            col_target = 'Close' if 'Close' in df.columns else df.columns[-1]
+            raw_prices = df[col_target].to_numpy().flatten()
+            
+            # 純粋な数値(float)だけを抽出（NaNやゴミを排除）
+            prices = [float(x) for x in raw_prices if np.isscalar(x) and not np.isnan(x)]
             
             if len(prices) < 2:
                 perf_text += f"\n◆ {name}\n   データ不足\n"
@@ -58,26 +63,29 @@ def get_market_summary():
             close_now = prices[-1]
             close_prev = prices[-2]
             
-            # 年初来データの取得も同様の手法で堅牢化
-            ytd_raw = df[df.index.year >= current_year]['Close'].to_numpy().flatten()
+            # 年初来の特定（今年のデータだけを同様の手順で抽出）
+            ytd_raw = df[df.index.year >= current_year][col_target].to_numpy().flatten()
             ytd_prices = [float(x) for x in ytd_raw if np.isscalar(x) and not np.isnan(x)]
             close_ytd = ytd_prices if ytd_prices else close_now
-            # ------------------------
 
-            # 計算
+            # 3. 計算
             day_pct = ((close_now - close_prev) / close_prev * 100)
             ytd_pct = ((close_now - close_ytd) / close_ytd * 100)
             
-            # 表示補正
+            # 4. 表示補正
             val = close_now
             is_warn = ticker in ["^TNX", "^US2Y", "^VIX"]
             
-            # 金利が40(4.0%)を超えていたら10で割る（yfinanceの単位バラツキ対策）
+            # 金利の表示補正（yfinanceの単位バラツキ対策）
             if ticker in ["^TNX", "^US2Y"] and val > 15:
                 val = val / 10
             
             unit = "pt" if ticker == "^VIX" else ("%" if ticker in ["^TNX", "^US2Y"] else "")
-            day_arrow = ("📈" if day_pct > 0 else "📉") if is_warn else ("🚀" if day_pct > 0 else "💦")
+            
+            if day_pct > 0:
+                day_arrow = "📈" if is_warn else "🚀"
+            else:
+                day_arrow = "📉" if is_warn else "💦"
             ytd_arrow = "🔥" if ytd_pct > 0 else "❄️"
 
             perf_text += f"\n◆ {name}\n"
@@ -85,7 +93,8 @@ def get_market_summary():
             perf_text += f"   ┗ 年初来: {ytd_arrow} {ytd_pct:+.2f}%\n"
 
         except Exception:
-            perf_text += f"\n◆ {name}\n   計算エラー\n"
+            # 最終防衛ライン：エラー時は項目を飛ばしてLINE送信全体は維持する
+            perf_text += f"\n◆ {name}\n   データ処理エラー\n"
             
     return perf_text
 
