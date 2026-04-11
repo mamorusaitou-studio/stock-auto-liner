@@ -21,30 +21,30 @@ INDICES = {
 def get_data(ticker):
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=5d&interval=1d"
-        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        res = requests.get(url, headers=headers, timeout=10)
         data = res.json()
         
-        # --- 階層を1段ずつ、リストを使って確実に掘る ---
-        chart = data.get('chart', {})
-        res_list = chart.get('result')
-        if not res_list: return None
+        # 1. 'result' という「リスト」から、0番目の中身（辞書）を取り出す
+        res_list = data['chart']['result']
+        main_data = res_list # ← ここで を使ってリストを剥く
         
-        main_data = res_list # ここがリスト
-        indicators = main_data.get('indicators', {})
-        quote_list = indicators.get('quote', [])
-        if not quote_list: return None
+        # 2. 'quote' という「リスト」から、0番目の中身（辞書）を取り出す
+        indicators = main_data['indicators']
+        quote_list = indicators['quote']
+        actual_prices_dict = quote_list # ← ここでも を使ってリストを剥く
         
-        actual_quote = quote_list # ここもリスト
-        prices = actual_quote.get('close', [])
+        # 3. 終値のリストを取得
+        prices = actual_prices_dict['close']
         
-        # 有効な数字のみ
-        valid_prices = [p for p in prices if p is not None]
-        
-        if len(valid_prices) >= 2:
-            return valid_prices[-1], valid_prices[-2]
+        # Noneを除いた最新2件
+        valid = [p for p in prices if p is not None]
+        if len(valid) >= 2:
+            return valid[-1], valid[-2]
         return None
     except Exception as e:
-        print(f"Error on {ticker}: {e}")
+        # ログに何がダメだったか出力する（GitHub Actionsで見れます）
+        print(f"DEBUG {ticker}: {e}")
         return None
 
 def main():
@@ -57,17 +57,14 @@ def main():
         if res:
             now, prev = res
             diff = ((now - prev) / prev) * 100
-            
-            # 金利の表示調整
             val = now
             if ticker == "^TNX" and val > 15: val /= 10
-            unit = "%" if ticker == "^TNX" else ("pt" if ticker == "^VIX" else "")
             
             # アイコン
             icon = "🚀" if diff > 0 else "💦"
             if ticker == "^VIX": icon = "😱" if diff > 0 else "😌"
             
-            msg += f"\n◆ {name}\n   {val:,.2f}{unit} ({icon} {diff:+.2f}%)"
+            msg += f"\n◆ {name}\n   {val:,.2f} ({icon} {diff:+.2f}%)"
             count += 1
         time.sleep(0.3)
 
