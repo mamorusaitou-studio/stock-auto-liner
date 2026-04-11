@@ -11,6 +11,7 @@ from datetime import datetime
 LINE_TOKEN = os.environ.get("LINE_TOKEN")
 USER_ID = os.environ.get("USER_ID")
 
+# 【完全版】米国市場銘柄リスト（2年金利・VIX追加）
 INDICES = {
     "^GSPC": ("S&P 500", "米国株の体温計。主要500社の動き。"),
     "^NDX": ("Nasdaq 100", "ハイテク株の象徴。金利上昇に弱い。"),
@@ -19,6 +20,8 @@ INDICES = {
     "GC=F": ("ゴールド", "安全資産。有事やインフレ時に買われる。"),
     "CL=F": ("WTI原油", "エネルギー価格。ガソリン代や物価に直結。"),
     "^TNX": ("米国10年金利", "長期金利。これが高いと株価の重石に。"),
+    "^US2Y": ("米国2年金利", "短期金利。FRBの利上げ・利下げを反映。"),
+    "^VIX": ("VIX指数", "恐怖指数。市場の警戒感（20超えで注意）。")
 }
 
 def send_line(message):
@@ -34,21 +37,40 @@ def get_market_summary():
     
     for ticker, (name, desc) in INDICES.items():
         try:
-            # 1銘柄ずつ確実に履歴を取得
             t = yf.Ticker(ticker)
             df = t.history(period="1y")
 
-            if df.empty or len(df) < 2:
+            if df.empty:
                 perf_text += f"\n◆ {name}\n   データ取得失敗\n"
                 continue
 
-            # 確実に「Close（終値）」列だけを抜き出して欠損値を排除
-            series_close = df['Close'].dropna()
-            
+            # 【エラー対策1】yfinanceの仕様変更による多重構造(MultiIndex)を平坦化
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+
+            if 'Close' not in df.columns:
+                perf_text += f"\n◆ {name}\n   データ取得失敗\n"
+                continue
+
+            # 【エラー対策2】DataFrameになってしまった場合、最初の列（Series）を取り出す
+            close_col = df['Close']
+            if isinstance(close_col, pd.DataFrame):
+                series_close = close_col.iloc[:, 0]
+            else:
+                series_close = close_col
+
+            series_close = series_close.dropna()
+            if len(series_close) < 2:
+                perf_text += f"\n◆ {name}\n   データ不足\n"
+                continue
+
+            # 【エラー対策3】日付フォーマットの違いによるエラーを強制修正
+            series_close.index = pd.to_datetime(series_close.index, utc=True)
+
             close_now = float(series_close.iloc[-1])
             close_prev = float(series_close.iloc[-2])
             
-            # 【修正箇所】タイムゾーンエラーを防ぐため、「文字」ではなく「年」で比較
+            # 年初来の取得
             ytd_df = series_close[series_close.index.year >= current_year]
             close_ytd = float(ytd_df.iloc) if not ytd_df.empty else close_now
 
@@ -57,12 +79,20 @@ def get_market_summary():
             ytd_pct = ((close_now - close_ytd) / close_ytd) * 100
             
             val = close_now
-            if ticker == "^TNX" and val > 10:
-                val = val / 10
-            unit = "%" if ticker == "^TNX" else ""
+            is_yield_or_vix = ticker in ["^TNX", "^US2Y", "^VIX"]
             
-            day_arrow = "🚀" if day_pct > 0 else "💦"
-            if ticker == "^TNX": day_arrow = "📈" if day_pct > 0 else "📉"
+            # 金利の表示補正（yfinanceの10倍表示対策）
+            if ticker in ["^TNX", "^US2Y"] and val > 10:
+                val = val / 10
+                
+            unit = "pt" if ticker == "^VIX" else ("%" if ticker in ["^TNX", "^US2Y"] else "")
+            
+            # 絵文字の出し分け（金利とVIXは上がると警戒📈、下がると安心📉）
+            if day_pct > 0:
+                day_arrow = "📈" if is_yield_or_vix else "🚀"
+            else:
+                day_arrow = "📉" if is_yield_or_vix else "💦"
+                
             ytd_arrow = "🔥" if ytd_pct > 0 else "❄️"
 
             # 表示の組み立て
@@ -72,8 +102,8 @@ def get_market_summary():
             perf_text += f"   └ {desc}\n"
 
         except Exception as e:
-            # 万が一のシステムエラー時も、長文にならず何が原因かを出力
-            perf_text += f"\n◆ {name}\n   計算エラー ({type(e).__name__})\n"
+            # エラー発生時も最小限の行数で理由を記載
+            perf_text += f"\n◆ {name}\n   計算エラー({type(e).__name__})\n"
             
     return perf_text
 
