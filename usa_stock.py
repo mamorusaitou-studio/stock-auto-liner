@@ -4,7 +4,7 @@ import os
 import time
 from datetime import datetime, timezone
 
-# --- 設定 (GitHub Secrets) ---
+# --- 設定 ---
 LINE_TOKEN = os.environ.get("LINE_TOKEN")
 USER_ID = os.environ.get("USER_ID")
 
@@ -21,9 +21,6 @@ INDICES = {
 }
 
 def get_finance_data(ticker):
-    """
-    階層構造を1段階ずつ、型を確認しながら確実に掘り進める防弾ロジック
-    """
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=1y&interval=1d"
         headers = {'User-Agent': 'Mozilla/5.0'}
@@ -32,37 +29,33 @@ def get_finance_data(ticker):
         
         data = res.json()
         
-        # 1. 'chart' -> 'result' (リスト) を取得
-        chart_data = data.get('chart', {})
-        result_list = chart_data.get('result')
-        if not result_list or not isinstance(result_list, list): return None
+        # 1. 階層を一つずつ変数に代入して確実に掘る
+        chart = data.get('chart', {})
+        results = chart.get('result', [])
+        if not results: return None
         
-        # 2. 0番目の要素にアクセス
-        main_result = result_list
+        main_result = results
         timestamps = main_result.get('timestamp', [])
         
-        # 3. 'indicators' -> 'quote' (リスト) を取得
         indicators = main_result.get('indicators', {})
-        quote_list = indicators.get('quote')
+        quote_list = indicators.get('quote', [])
         
-        # 4. 【エラーの元】quote_list がリストであることを確認し、0番目を取り出す
-        if not quote_list or not isinstance(quote_list, list) or len(quote_list) == 0:
-            return None
+        # 2. 【ここが修正の核心】
+        # quote_listはリストなので、まず0番目の辞書を取り出す
+        if not quote_list or not isinstance(quote_list, list): return None
+        actual_data_dict = quote_list 
         
-        # ここでリストから「辞書」を取り出してから get を使う
-        actual_data_dict = quote_list
-        if not isinstance(actual_data_dict, dict): return None
-        
+        # 3. 辞書から 'close' リストを取得
         prices = actual_data_dict.get('close', [])
         
-        # 5. 有効データ(None以外)を抽出
+        # 有効な数字のみ抽出
         clean_data = [(t, p) for t, p in zip(timestamps, prices) if p is not None]
         if len(clean_data) < 2: return None
 
         now = clean_data[-1]
         prev = clean_data[-2]
         
-        # 年初来価格の特定
+        # 年初来価格
         current_year = datetime.now(timezone.utc).year
         ytd_val = now
         for t, p in clean_data:
@@ -72,7 +65,7 @@ def get_finance_data(ticker):
         return now, prev, ytd_val
 
     except Exception as e:
-        # エラーが出た場合、ログに詳細を残す（検証用）
+        # 失敗した場合はログに出すが、LINE送信は止めない
         print(f"DEBUG: {ticker} failed with {type(e).__name__}: {e}")
         return None
 
@@ -84,7 +77,7 @@ def get_market_summary():
     for ticker, (name, desc) in INDICES.items():
         res = get_finance_data(ticker)
         if not res:
-            text += f"\n◆ {name}\n   データ取得失敗\n"
+            text += f"\n◆ {name}\n   データ更新待ち\n"
             continue
             
         success_count += 1
@@ -96,7 +89,6 @@ def get_market_summary():
         if ticker in ["^TNX", "^US2Y"] and val > 15: val /= 10
         unit = "pt" if ticker == "^VIX" else ("%" if ticker in ["^TNX", "^US2Y"] else "")
         
-        # アイコン判定
         is_warn = ticker in ["^TNX", "^US2Y", "^VIX"]
         day_arrow = ("📈" if day_pct > 0 else "📉") if is_warn else ("🚀" if day_pct > 0 else "💦")
         if ticker == "^VIX": day_arrow = "😱" if day_pct > 0 else "😌"
@@ -110,7 +102,7 @@ def get_market_summary():
 
 if __name__ == "__main__":
     message = get_market_summary()
-    if message:
+    if message and LINE_TOKEN and USER_ID:
         url = "https://api.line.me/v2/bot/message/push"
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {LINE_TOKEN}"}
         payload = {"to": USER_ID, "messages": [{"type": "text", "text": message}]}
