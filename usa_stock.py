@@ -1,3 +1,4 @@
+print("★★★ THIS FILE IS RUNNING ★★★")
 def get_price(ticker):
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=1y&interval=1d"
