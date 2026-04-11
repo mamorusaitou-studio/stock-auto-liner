@@ -5,91 +5,140 @@ import time
 from datetime import datetime, timezone
 
 # ==========================================
-# 設定エリア
+# 設定
 # ==========================================
 LINE_TOKEN = os.environ.get("LINE_TOKEN")
 USER_ID = os.environ.get("USER_ID")
 
 INDICES = {
-    "^GSPC": ("S&P 500", "米国株の体温計。主要500社の動き。"),
-    "^NDX": ("Nasdaq 100", "ハイテク株の象徴。金利上昇に弱い。"),
-    "^SOX": ("SOX指数", "半導体セクターの勢い。景気の先行指標。"),
-    "^RUT": ("ラッセル2000", "米国の小型株。景気に敏感に反応。"),
-    "GC=F": ("ゴールド", "安全資産。有事やインフレ時に買われる。"),
-    "CL=F": ("WTI原油", "エネルギー価格。物価に直結。"),
-    "^TNX": ("米国10年金利", "長期金利。株価の重石。"),
-    "^US2Y": ("米国2年金利", "短期金利。FRBの動きを反映。"),
-    "^VIX": ("VIX指数", "恐怖指数。市場の警戒感。")
+    "^GSPC": "S&P500",
+    "^NDX": "NASDAQ100",
+    "^SOX": "SOX",
+    "^RUT": "RUSSELL2000",
+    "GC=F": "GOLD",
+    "CL=F": "WTI",
+    "^TNX": "10Y",
+    "^US2Y": "2Y",
+    "^VIX": "VIX"
 }
 
+# ==========================================
+# LINE送信（UTF-8完全対応）
+# ==========================================
 def send_line(message):
-    if not LINE_TOKEN or not USER_ID: return
-    url = "https://api.line.me/v2/bot/message/push"
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {LINE_TOKEN}"}
-    data = {"to": USER_ID, "messages": [{"type": "text", "text": message}]}
-    requests.post(url, headers=headers, data=json.dumps(data))
+    if not LINE_TOKEN or not USER_ID:
+        print("LINE未設定")
+        return
 
-def get_finance_data(ticker):
-    """ライブラリを通さず、生の数字だけを確実に引っこ抜く"""
+    url = "https://api.line.me/v2/bot/message/push"
+
+    headers = {
+        "Authorization": f"Bearer {LINE_TOKEN}",
+        "Content-Type": "application/json; charset=UTF-8"
+    }
+
+    payload = {
+        "to": USER_ID,
+        "messages": [{"type": "text", "text": message}]
+    }
+
+    try:
+        res = requests.post(
+            url,
+            headers=headers,
+            json=payload  # ← ここ重要（dataじゃなくjson）
+        )
+
+        if res.status_code != 200:
+            print("LINE送信失敗:", res.text)
+
+    except Exception as e:
+        print("LINE送信エラー:", e)
+
+# ==========================================
+# データ取得
+# ==========================================
+def get_price(ticker):
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=1y&interval=1d"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        res = requests.get(url, headers=headers, timeout=10)
-        data = res.json()
-        
-        result = data['chart']['result']
-        timestamps = result['timestamp']
-        prices = result['indicators']['quote']['close']
-        
-        # 欠損値を除去
-        clean_data = [(t, p) for t, p in zip(timestamps, prices) if p is not None]
-        if len(clean_data) < 2: return None
+        res = requests.get(url, timeout=10)
 
-        now = clean_data[-1]
-        prev = clean_data[-2]
-        
-        # 年初来を特定
-        current_year = datetime.now(timezone.utc).year
-        ytd_val = now
-        for t, p in clean_data:
-            if datetime.fromtimestamp(t, tz=timezone.utc).year >= current_year:
-                ytd_val = p
+        data = res.json()
+        result = data["chart"]["result"][0]
+
+        timestamps = result["timestamp"]
+        closes = result["indicators"]["quote"][0]["close"]
+
+        clean = [(t, p) for t, p in zip(timestamps, closes) if p]
+
+        if len(clean) < 2:
+            return None
+
+        # ← 修正済
+        _, now = clean[-1]
+        _, prev = clean[-2]
+
+        # 年初
+        year = datetime.now(timezone.utc).year
+        ytd = now
+
+        for t, p in clean:
+            if datetime.fromtimestamp(t, timezone.utc).year >= year:
+                ytd = p
                 break
-        return now, prev, ytd_val
-    except:
+
+        return now, prev, ytd
+
+    except Exception as e:
+        print(f"{ticker} error:", e)
         return None
 
-def get_market_summary():
-    perf_text = f"【🧭 米国市場：お宝レポート】\n{datetime.now().strftime('%Y/%m/%d %H:%M')}\n"
+# ==========================================
+# フォーマット（LINE最適化）
+# ==========================================
+def format_line(name, now, prev, ytd, ticker):
+    day = (now - prev) / prev * 100
+    ytdp = (now - ytd) / ytd * 100
+
+    # シンプル化（崩れ防止）
+    icon = "+" if day > 0 else "-"
     
-    for ticker, (name, desc) in INDICES.items():
-        res = get_finance_data(ticker)
-        if not res:
-            perf_text += f"\n◆ {name}\n   データ取得失敗\n"
+    # VIX特別
+    if ticker == "^VIX":
+        icon = "!!" if day > 0 else "OK"
+
+    return f"{name}: {now:.2f} ({icon}{day:+.2f}%) YTD:{ytdp:+.1f}%"
+
+# ==========================================
+# メイン
+# ==========================================
+def build_message():
+    lines = []
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    lines.append(f"[US Market] {now}")
+
+    for ticker, name in INDICES.items():
+        data = get_price(ticker)
+
+        if not data:
+            lines.append(f"{name}: error")
             continue
-            
-        now, prev, ytd = res
-        day_pct = (now - prev) / prev * 100
-        ytd_pct = (now - ytd) / ytd * 100
-        
-        # 金利/VIXの表示調整
-        val = now
-        if ticker in ["^TNX", "^US2Y"] and val > 15: val /= 10
-        unit = "pt" if ticker == "^VIX" else ("%" if ticker in ["^TNX", "^US2Y"] else "")
-        
-        # アイコン
-        is_warn = ticker in ["^TNX", "^US2Y", "^VIX"]
-        day_arrow = ("📈" if day_pct > 0 else "📉") if is_warn else ("🚀" if day_pct > 0 else "💦")
-        ytd_arrow = "🔥" if ytd_pct > 0 else "❄️"
 
-        perf_text += f"\n◆ {name}\n"
-        perf_text += f"   {val:,.2f}{unit} ({day_arrow} {day_pct:+.2f}%)\n"
-        perf_text += f"   ┗ 年初来: {ytd_arrow} {ytd_pct:+.2f}%\n"
-        perf_text += f"   └ {desc}\n"
-        time.sleep(0.3)
+        now_p, prev_p, ytd_p = data
+        line = format_line(name, now_p, prev_p, ytd_p, ticker)
+        lines.append(line)
 
-    return perf_text
+        time.sleep(0.5)
 
+    # LINE制限対策（長すぎ防止）
+    msg = "\n".join(lines)
+    return msg[:4900]
+
+# ==========================================
+# 実行
+# ==========================================
 if __name__ == "__main__":
-    message = get_market_summary()
-    send_line(message)
+    msg = build_message()
+    print(msg)
+    send_line(msg)
