@@ -2,7 +2,7 @@ import yfinance as yf
 import requests
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # ==========================================
 # 設定エリア
@@ -33,31 +33,28 @@ def get_market_summary():
     
     for ticker, (name, desc) in INDICES.items():
         try:
-            # 1. 銘柄ごとに個別に、確実にデータを取得
-            t = yf.Ticker(ticker)
-            # 年初来を計算するため、1年分を確保
-            df = t.history(period="1y", auto_adjust=True)
+            # 1つずつ個別に、確実に「終値」の履歴だけを取得する
+            # yfinanceの最も安定した 'history' メソッドを使用
+            ticker_obj = yf.Ticker(ticker)
+            df = ticker_obj.history(period="1y", auto_adjust=True)
 
             if df.empty or len(df) < 2:
                 perf_text += f"\n◆ {name}\n   データ取得失敗\n"
                 continue
 
-            # 2. 最新値と前日値を取得（確実にClose列から）
+            # 最新の終値と、その1日前の終値
             close_now = float(df['Close'].iloc[-1])
             close_prev = float(df['Close'].iloc[-2])
             
-            # 3. 年初来（今年の最初の営業日）の値を特定
+            # 今年の年初（最初の行）の終値
             ytd_df = df[df.index >= f"{current_year}-01-01"]
-            if ytd_df.empty:
-                close_ytd = close_now
-            else:
-                close_ytd = float(ytd_df['Close'].iloc)
+            close_ytd = float(ytd_df['Close'].iloc) if not ytd_df.empty else close_now
 
-            # 4. 騰落率の計算
+            # 騰落率の計算
             day_pct = ((close_now - close_prev) / close_prev) * 100
             ytd_pct = ((close_now - close_ytd) / close_ytd) * 100
             
-            # 金利の表示補正（10倍表示対策）
+            # 金利(^TNX)の表示補正
             val = close_now
             if ticker == "^TNX" and val > 10:
                 val = val / 10
@@ -67,18 +64,17 @@ def get_market_summary():
             if ticker == "^TNX": day_arrow = "📈" if day_pct > 0 else "📉"
             ytd_arrow = "🔥" if ytd_pct > 0 else "❄️"
 
-            # 5. 表示
+            # 4. 表示
             perf_text += f"\n◆ {name}\n"
             perf_text += f"   {val:,.2f}{unit} ({day_arrow} {day_pct:+.2f}%)\n"
             perf_text += f"   ┗ 年初来: {ytd_arrow} {ytd_pct:+.2f}%\n"
             perf_text += f"   └ {desc}\n"
 
         except Exception:
-            perf_text += f"\n◆ {name}\n   計算エラー（調整中）\n"
+            perf_text += f"\n◆ {name}\n   計算エラー（最終調整中）\n"
             
     return perf_text
 
 if __name__ == "__main__":
     message = get_market_summary()
     send_line(message)
-    
