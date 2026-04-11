@@ -33,40 +33,32 @@ def get_market_summary():
     
     for ticker, (name, desc) in INDICES.items():
         try:
-            # 1. データを取得
-            df = yf.download(ticker, start=f"{current_year}-01-01", progress=False)
-            if df.empty:
-                df = yf.download(ticker, period="5d", progress=False)
+            # 1. 1年分のデータを取得 (auto_adjustで終値に固定)
+            t = yf.Ticker(ticker)
+            df = t.history(period="1y")
 
-            # 2. 【究極のエラー対策】名前を無視して「数値」だけをリスト化
-            # .values で純粋な配列にし、.flatten() で1次元にしてから、
-            # float以外（見出し等）を徹底排除して「数字だけの列」を作る
-            raw_data = df.values.flatten()
-            prices = []
-            for val in raw_data:
-                try:
-                    p = float(val)
-                    if p == p: # NaN（空データ）チェック
-                        prices.append(p)
-                except:
-                    continue
-
-            if len(prices) < 2:
-                perf_text += f"\n◆ {name}\n   データ不足\n"
+            if df.empty or len(df) < 2:
+                perf_text += f"\n◆ {name}\n   データ取得失敗\n"
                 continue
 
-            # 3. yfinanceの多重構造(Open, High, Low, Close...)を考慮し、
-            # 1日あたりのデータ数（通常6個か8個）で最新と年初を特定する
-            cols_count = len(df.columns)
-            close_now = prices[-1] # 一番最後が最新の終値
-            close_prev = prices[-(1 + cols_count)] # 1行分前が前日の終値
-            close_ytd = prices[cols_count - 1] # 最初の行の最後が年初の終値
+            # 2. 今年1月1日のデータを特定
+            ytd_df = df[df.index >= f"{current_year}-01-01"]
+            if ytd_df.empty:
+                ytd_df = df # 万が一の場合は全期間
+
+            # 3. 確実に「終値(Close)」だけを取り出す
+            close_now = float(ytd_df['Close'].iloc[-1])
+            close_prev = float(df['Close'].iloc[-2]) # 前日は全期間から取得
+            close_ytd = float(ytd_df['Close'].iloc)
 
             # 4. 騰落率の計算
             day_pct = ((close_now - close_prev) / close_prev) * 100
             ytd_pct = ((close_now - close_ytd) / close_ytd) * 100
             
-            val = close_now / 10 if ticker == "^TNX" else close_now
+            # 金利(^TNX)は10倍表示ではないケースが増えたため、40超えなら10で割る安全策
+            val = close_now
+            if ticker == "^TNX" and val > 40:
+                val = val / 10
             unit = "%" if ticker == "^TNX" else ""
             
             day_arrow = "🚀" if day_pct > 0 else "💦"
@@ -74,12 +66,12 @@ def get_market_summary():
             ytd_arrow = "🔥" if ytd_pct > 0 else "❄️"
 
             perf_text += f"\n◆ {name}\n"
-            perf_text += f"   {val:.2f}{unit} ({day_arrow} {day_pct:+.2f}%)\n"
+            perf_text += f"   {val:,.2f}{unit} ({day_arrow} {day_pct:+.2f}%)\n"
             perf_text += f"   ┗ 年初来: {ytd_arrow} {ytd_pct:+.2f}%\n"
             perf_text += f"   └ {desc}\n"
 
         except Exception:
-            perf_text += f"\n◆ {name}\n   計算エラー（対策中）\n"
+            perf_text += f"\n◆ {name}\n   計算エラー(復旧中)\n"
             
     return perf_text
 
