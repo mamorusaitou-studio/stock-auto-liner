@@ -6,7 +6,7 @@ import pandas as pd
 from datetime import datetime
 
 # ==========================================
-# 設定エリア (GitHubのSecrets)
+# 設定エリア
 # ==========================================
 LINE_TOKEN = os.environ.get("LINE_TOKEN")
 USER_ID = os.environ.get("USER_ID")
@@ -34,27 +34,33 @@ def get_market_summary():
     
     for ticker, (name, desc) in INDICES.items():
         try:
-            # 最新のyfinance対策: auto_adjust=True と 確実にデータを取る設定
+            # データ取得
             df = yf.download(ticker, start=f"{current_year}-01-01", progress=False, auto_adjust=True)
-            
-            if df.empty or len(df) < 1:
+            if df.empty:
                 df = yf.download(ticker, period="5d", progress=False, auto_adjust=True)
 
             if df.empty:
                 perf_text += f"\n◆ {name}\n   データ取得不能\n"
                 continue
 
-            # --- ここが最強の対策コード ---
-            # yfinanceの構造が変わっても、末尾の列（通常はClose）を強制的に数値で取得
-            prices = df.iloc[:, 0].astype(float) # 最初の列（Close）を抜き出す
+            # ---【最強のエラー対策】表から「純粋な数字」だけを引っこ抜く ---
+            # 1. どんな形式で来ても「Close」列（または最初の列）を取得
+            if 'Close' in df.columns:
+                target_col = df['Close']
+            else:
+                target_col = df.iloc[:, 0]
             
-            close_now = prices.iloc[-1]
-            close_prev = prices.iloc[-2] if len(prices) >= 2 else close_now
-            close_ytd = prices.iloc
-            # ---------------------------
+            # 2. 表（Series）から純粋な値だけのリストに変換し、最後と最初を取得
+            prices = target_col.values.flatten() # これでただの数字の羅列になる
+            
+            close_now = float(prices[-1])
+            close_prev = float(prices[-2]) if len(prices) >= 2 else close_now
+            close_ytd = float(prices)
+            # ---------------------------------------------------------
 
-            day_pct = ((close_now - close_prev) / close_prev) * 100 if close_prev != 0 else 0
-            ytd_pct = ((close_now - close_ytd) / close_ytd) * 100 if close_ytd != 0 else 0
+            # 計算（ここでもし万が一エラーが出ても止まらないようにする）
+            day_pct = ((close_now - close_prev) / close_prev * 100) if close_prev != 0 else 0
+            ytd_pct = ((close_now - close_ytd) / close_ytd * 100) if close_ytd != 0 else 0
             
             val = close_now / 10 if ticker == "^TNX" else close_now
             unit = "%" if ticker == "^TNX" else ""
@@ -69,8 +75,9 @@ def get_market_summary():
             perf_text += f"   └ {desc}\n"
 
         except Exception as e:
-            # 最終手段：エラーの詳細を少しだけ出す
-            perf_text += f"\n◆ {name}\n   計算エラー({str(e)[:10]})\n"
+            # エラーが出た場合、その内容を極力短く表示
+            err_msg = str(e)[:15]
+            perf_text += f"\n◆ {name}\n   計算エラー({err_msg})\n"
             
     return perf_text
 
