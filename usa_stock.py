@@ -2,12 +2,12 @@ import yfinance as yf
 import requests
 import json
 import os
-import pandas as pd
 import numpy as np
+import pandas as pd
 from datetime import datetime
 
 # ==========================================
-# 設定エリア
+# 設定エリア (GitHubのSecretsを使用)
 # ==========================================
 LINE_TOKEN = os.environ.get("LINE_TOKEN")
 USER_ID = os.environ.get("USER_ID")
@@ -20,7 +20,7 @@ INDICES = {
     "GC=F": ("ゴールド", "安全資産。有事やインフレ時に買われる。"),
     "CL=F": ("WTI原油", "エネルギー価格。ガソリン代や物価に直結。"),
     "^TNX": ("米国10年金利", "長期金利。これが高いと株価の重石に。"),
-    "^US2Y": ("米国2年金利", "短期金利。FRBの動きを直接反映。"),
+    "^US2Y": ("米国2年金利", "短期金利。FRBの動きを反映。"),
     "^VIX": ("VIX指数", "恐怖指数。市場の警戒感。")
 }
 
@@ -38,17 +38,17 @@ def get_market_summary():
     for ticker, (name, desc) in INDICES.items():
         try:
             # 1. 履歴を1年分取得
-            df = yf.Ticker(ticker).history(period="1y")
+            df = yf.Ticker(ticker).history(period="1y", auto_adjust=True)
             if df.empty:
                 perf_text += f"\n◆ {name}\n   データ取得失敗\n"
                 continue
 
-            # 2. 【エラー対策の決定版】
-            # Close列を指定し、さらに values.flatten() で銘柄名などの情報を完全に削ぎ落とす
-            raw_close = df['Close'].values.flatten()
+            # 2. 【防弾対策】名前や階層をすべて捨てて、純粋な数値の列に変える
+            # .to_numpy() でラベル情報を完全に消し去る
+            close_values = df['Close'].to_numpy().flatten()
             
-            # 3. リストの中から「有効な数字」だけを抽出
-            prices = [float(x) for x in raw_close if np.isscalar(x) and not np.isnan(x)]
+            # 3. 欠損値(NaN)を除去した純粋な数値リスト
+            prices = [float(x) for x in close_values if np.isscalar(x) and not np.isnan(x)]
             
             if len(prices) < 2:
                 perf_text += f"\n◆ {name}\n   データ不足\n"
@@ -57,17 +57,16 @@ def get_market_summary():
             close_now = prices[-1]
             close_prev = prices[-2]
             
-            # 4. 年初来の取得 (インデックスの「年」でフィルタリング)
-            # タイムゾーンエラーを避けるため、一度 index.year で判定
-            ytd_prices = df[df.index.year >= current_year]['Close'].values.flatten()
+            # 4. 年初来の取得 (インデックスの年でフィルタ)
+            ytd_prices = df[df.index.year >= current_year]['Close'].to_numpy().flatten()
             valid_ytd = [float(x) for x in ytd_prices if np.isscalar(x) and not np.isnan(x)]
             close_ytd = valid_ytd if valid_ytd else close_now
 
-            # 5. 計算
+            # 5. 騰落率の計算
             day_pct = ((close_now - close_prev) / close_prev * 100)
             ytd_pct = ((close_now - close_ytd) / close_ytd * 100)
             
-            # 表示補正
+            # 金利の表示補正
             val = close_now
             if ticker in ["^TNX", "^US2Y"] and val > 10:
                 val = val / 10
