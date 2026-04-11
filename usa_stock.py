@@ -2,15 +2,15 @@ import yfinance as yf
 import requests
 import json
 import os
+import pandas as pd
 from datetime import datetime
 
 # ==========================================
-# 設定エリア (GitHubのSecretsを使用)
+# 設定エリア (GitHubのSecrets)
 # ==========================================
 LINE_TOKEN = os.environ.get("LINE_TOKEN")
 USER_ID = os.environ.get("USER_ID")
 
-# 【米国市場専用】銘柄リスト
 INDICES = {
     "^GSPC": ("S&P 500", "米国株の体温計。主要500社の動き。"),
     "^NDX": ("Nasdaq 100", "ハイテク株の象徴。金利上昇に弱い。"),
@@ -34,7 +34,7 @@ def get_market_summary():
     
     for ticker, (name, desc) in INDICES.items():
         try:
-            # 最新の仕様に合わせてデータをダウンロード
+            # 最新のyfinance対策: auto_adjust=True と 確実にデータを取る設定
             df = yf.download(ticker, start=f"{current_year}-01-01", progress=False, auto_adjust=True)
             
             if df.empty or len(df) < 1:
@@ -44,30 +44,24 @@ def get_market_summary():
                 perf_text += f"\n◆ {name}\n   データ取得不能\n"
                 continue
 
-            # 【重要】yfinanceのマルチインデックス対策（平坦化）
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.get_level_values(0)
-
-            # 確実に数値として取得
-            close_now = float(df['Close'].iloc[-1])
+            # --- ここが最強の対策コード ---
+            # yfinanceの構造が変わっても、末尾の列（通常はClose）を強制的に数値で取得
+            prices = df.iloc[:, 0].astype(float) # 最初の列（Close）を抜き出す
             
-            # 前日比の計算
-            day_pct = 0.0
-            day_arrow = "―"
-            if len(df) >= 2:
-                close_prev = float(df['Close'].iloc[-2])
-                day_pct = ((close_now - close_prev) / close_prev) * 100
-                day_arrow = "🚀" if day_pct > 0 else "💦"
-                if ticker == "^TNX": day_arrow = "📈" if day_pct > 0 else "📉"
+            close_now = prices.iloc[-1]
+            close_prev = prices.iloc[-2] if len(prices) >= 2 else close_now
+            close_ytd = prices.iloc
+            # ---------------------------
 
-            # 年初来の計算
-            close_ytd = float(df['Close'].iloc)
-            ytd_pct = ((close_now - close_ytd) / close_ytd) * 100
-            ytd_arrow = "🔥" if ytd_pct > 0 else "❄️"
-
-            # 表示調整（金利）
+            day_pct = ((close_now - close_prev) / close_prev) * 100 if close_prev != 0 else 0
+            ytd_pct = ((close_now - close_ytd) / close_ytd) * 100 if close_ytd != 0 else 0
+            
             val = close_now / 10 if ticker == "^TNX" else close_now
             unit = "%" if ticker == "^TNX" else ""
+            
+            day_arrow = "🚀" if day_pct > 0 else "💦"
+            if ticker == "^TNX": day_arrow = "📈" if day_pct > 0 else "📉"
+            ytd_arrow = "🔥" if ytd_pct > 0 else "❄️"
 
             perf_text += f"\n◆ {name}\n"
             perf_text += f"   {val:.2f}{unit} ({day_arrow} {day_pct:+.2f}%)\n"
@@ -75,13 +69,10 @@ def get_market_summary():
             perf_text += f"   └ {desc}\n"
 
         except Exception as e:
-            # 何が起きたか特定するためにエラー内容を少し出す
-            perf_text += f"\n◆ {name}\n   計算エラー({type(e).__name__})\n"
+            # 最終手段：エラーの詳細を少しだけ出す
+            perf_text += f"\n◆ {name}\n   計算エラー({str(e)[:10]})\n"
             
     return perf_text
-
-# エラー対策で pandas もインポート
-import pandas as pd
 
 if __name__ == "__main__":
     message = get_market_summary()
