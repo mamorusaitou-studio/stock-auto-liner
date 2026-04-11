@@ -37,21 +37,20 @@ def get_market_summary():
     
     for ticker, (name, desc) in INDICES.items():
         try:
-            # 【究極の対策】yfinanceの「便利機能」を一切使わず、生のデータ列だけを引っこ抜く
-            # 1. 銘柄ごとに個別にダウンロード
-            # 2. auto_adjust=True で「終値」を一本化
-            data = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
+            # 1つずつ個別にダウンロード
+            df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
             
-            if data.empty:
-                perf_text += f"\n◆ {name}\n   取得失敗\n"
+            if df.empty:
+                perf_text += f"\n◆ {name}\n   データ取得失敗\n"
                 continue
 
-            # 3. 【防弾処理】表の形式を完全に無視して、「数字の塊」に変換
-            # names や columns の階層がどうなっていようと、 values で中身だけを強制抽出
-            # どんな多層構造が来ても、これでただの「数字の羅列」になります
-            raw_prices = data.iloc[:, data.columns.get_loc('Close') if 'Close' in data.columns else -1].values.flatten()
+            # 【究極の防弾処理】
+            # Close列を狙うが、万が一見つからなくても「一番最後の列」を数値として引っこ抜く。
+            # values.flatten() でラベルや階層を粉砕して「ただの数字の列」に変換。
+            target_col = df['Close'] if 'Close' in df.columns else df.iloc[:, -1]
+            raw_prices = target_col.values.flatten()
             
-            # 4. 有効な数値(float)だけを抽出してリスト化
+            # 純粋な数値(float)だけを抽出
             prices = [float(x) for x in raw_prices if np.isscalar(x) and not np.isnan(x)]
             
             if len(prices) < 2:
@@ -61,11 +60,15 @@ def get_market_summary():
             close_now = prices[-1]
             close_prev = prices[-2]
             
-            # 年初来データの特定
-            ytd_mask = data.index.year >= current_year
-            ytd_raw = data.loc[ytd_mask].iloc[:, 0].values.flatten()
-            ytd_prices = [float(x) for x in ytd_raw if np.isscalar(x) and not np.isnan(x)]
-            close_ytd = ytd_prices if ytd_prices else close_now
+            # 年初来データの特定（同じく力ずくで抽出）
+            ytd_df = df[df.index.year >= current_year]
+            if not ytd_df.empty:
+                ytd_target = ytd_df['Close'] if 'Close' in ytd_df.columns else ytd_df.iloc[:, -1]
+                ytd_raw = ytd_target.values.flatten()
+                ytd_prices = [float(x) for x in ytd_raw if np.isscalar(x) and not np.isnan(x)]
+                close_ytd = ytd_prices
+            else:
+                close_ytd = close_now
 
             # 計算
             day_pct = ((close_now - close_prev) / close_prev * 100)
@@ -84,11 +87,12 @@ def get_market_summary():
             perf_text += f"   {val:,.2f}{unit} ({day_arrow} {day_pct:+.2f}%)\n"
             perf_text += f"   ┗ 年初来: {ytd_arrow} {ytd_pct:+.2f}%\n"
 
-        except:
-            perf_text += f"\n◆ {name}\n   データ照合中...\n"
+        except Exception:
+            perf_text += f"\n◆ {name}\n   データ更新待ち\n"
             
     return perf_text
 
 if __name__ == "__main__":
     message = get_market_summary()
     send_line(message)
+    
