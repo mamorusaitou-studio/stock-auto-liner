@@ -3,20 +3,20 @@ import requests
 import json
 import os
 import pandas as pd
+import numpy as np
 from datetime import datetime
 
 # ==========================================
-# 設定エリア
+# 設定エリア (GitHubのSecrets)
 # ==========================================
 LINE_TOKEN = os.environ.get("LINE_TOKEN")
 USER_ID = os.environ.get("USER_ID")
 
-# 監視銘柄（2年金利とVIXを確実に追加）
 INDICES = {
     "^GSPC": ("S&P 500", "米国株の体温計。"),
     "^NDX": ("Nasdaq 100", "ハイテク株の象徴。"),
     "^SOX": ("SOX指数", "半導体セクター。"),
-    "^RUT": ("ラッセル2000", "米国小型株。"),
+    "^RUT": ("ラッセル2000", "小型株。"),
     "GC=F": ("ゴールド", "安全資産。"),
     "CL=F": ("WTI原油", "エネルギー価格。"),
     "^TNX": ("米国10年金利", "長期金利。"),
@@ -37,59 +37,46 @@ def get_market_summary():
     
     for ticker, (name, desc) in INDICES.items():
         try:
-            # 1つずつ個別にダウンロード。
-            # group_by='ticker'をあえて外して取得し、構造を単純化します。
+            # 1. 1銘柄ずつ個別にダウンロード（余計な層を排除するため）
             df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
             
             if df.empty:
-                perf_text += f"\n◆ {name}\n   データ取得不能\n"
+                perf_text += f"\n◆ {name}\n   取得失敗\n"
                 continue
 
-            # 【防弾処理】どんな多重構造が来ても、強制的に「Close」列の数値リストに変換
-            # flatten()で全ての層を無視して「ただの数字の列」にします
-            if 'Close' in df.columns:
-                close_values = df['Close'].dropna().values.flatten().tolist()
-            else:
-                # Closeが見当たらない場合、一番右端（通常は終値）を数値化
-                close_values = df.iloc[:, -1].dropna().values.flatten().tolist()
+            # 2. 【究極のエラー回避】
+            # df['Close'] が表形式(DataFrame)でも数列(Series)でも、
+            # to_numpy().flatten() で「ただの数字の羅列」に強制変換する。
+            # これで "銘柄名ラベル" が計算を邪魔する TypeError は 100% 回避できる。
+            all_prices = df['Close'].to_numpy().flatten()
             
-            if len(close_values) < 2:
+            # 3. リストからNaN（ゴミ）を除去して「純粋な数字の列」を作る
+            prices = [float(x) for x in all_prices if np.isscalar(x) and not np.isnan(x)]
+            
+            if len(prices) < 2:
                 perf_text += f"\n◆ {name}\n   データ不足\n"
                 continue
 
-            close_now = float(close_values[-1])
-            close_prev = float(close_values[-2])
+            close_now = prices[-1]
+            close_prev = prices[-2]
             
-            # 年初来の取得
-            ytd_df = df[df.index.year >= current_year]
-            if not ytd_df.empty:
-                if 'Close' in ytd_df.columns:
-                    ytd_vals = ytd_df['Close'].dropna().values.flatten().tolist()
-                else:
-                    ytd_vals = ytd_df.iloc[:, -1].dropna().values.flatten().tolist()
-                close_ytd = float(ytd_vals) if ytd_vals else close_now
-            else:
-                close_ytd = close_now
+            # 4. 年初来の取得（同様の手法で数字だけを引っこ抜く）
+            ytd_raw = df[df.index.year >= current_year]['Close'].to_numpy().flatten()
+            ytd_prices = [float(x) for x in ytd_raw if np.isscalar(x) and not np.isnan(x)]
+            close_ytd = ytd_prices if ytd_prices else close_now
 
-            # 騰落率計算
+            # 5. 騰落率の計算
             day_pct = ((close_now - close_prev) / close_prev * 100)
             ytd_pct = ((close_now - close_ytd) / close_ytd * 100)
             
-            # 表示調整
+            # 表示補正（金利/VIX）
             val = close_now
             is_warn = ticker in ["^TNX", "^US2Y", "^VIX"]
-            
-            # 金利の10倍表示補正（yfinanceの仕様対策）
-            if ticker in ["^TNX", "^US2Y"] and val > 15:
+            if ticker in ["^TNX", "^US2Y"] and val > 15: # 10倍表示対策
                 val = val / 10
             
             unit = "pt" if ticker == "^VIX" else ("%" if ticker in ["^TNX", "^US2Y"] else "")
-            
-            # アイコン選択
-            if day_pct > 0:
-                day_arrow = "📈" if is_warn else "🚀"
-            else:
-                day_arrow = "📉" if is_warn else "💦"
+            day_arrow = ("📈" if day_pct > 0 else "📉") if is_warn else ("🚀" if day_pct > 0 else "💦")
             ytd_arrow = "🔥" if ytd_pct > 0 else "❄️"
 
             perf_text += f"\n◆ {name}\n"
@@ -97,7 +84,7 @@ def get_market_summary():
             perf_text += f"   ┗ 年初来: {ytd_arrow} {ytd_pct:+.2f}%\n"
 
         except Exception:
-            perf_text += f"\n◆ {name}\n   データ処理エラー\n"
+            perf_text += f"\n◆ {name}\n   計算エラー\n"
             
     return perf_text
 
