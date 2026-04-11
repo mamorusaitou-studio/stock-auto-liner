@@ -3,6 +3,7 @@ import requests
 import json
 import os
 import pandas as pd
+import numpy as np
 from datetime import datetime
 
 # ==========================================
@@ -34,31 +35,31 @@ def get_market_summary():
     
     for ticker, (name, desc) in INDICES.items():
         try:
-            # データ取得
+            # 1. データを取得（auto_adjustで構造をシンプルに）
             df = yf.download(ticker, start=f"{current_year}-01-01", progress=False, auto_adjust=True)
             if df.empty:
                 df = yf.download(ticker, period="5d", progress=False, auto_adjust=True)
 
             if df.empty:
-                perf_text += f"\n◆ {name}\n   データ取得不能\n"
+                perf_text += f"\n◆ {name}\n   取得失敗\n"
                 continue
 
-            # ---【最強のエラー対策】表から「純粋な数字」だけを引っこ抜く ---
-            # 1. どんな形式で来ても「Close」列（または最初の列）を取得
-            if 'Close' in df.columns:
-                target_col = df['Close']
-            else:
-                target_col = df.iloc[:, 0]
+            # 2. 【最強の対策】どんな列名だろうと、とにかく「最初の列」の数値だけを抜く
+            # values.flatten() でコケたので、to_numpy() を使って確実に平坦なリストにする
+            raw_values = df.iloc[:, 0].to_numpy().flatten()
             
-            # 2. 表（Series）から純粋な値だけのリストに変換し、最後と最初を取得
-            prices = target_col.values.flatten() # これでただの数字の羅列になる
+            # 3. リストの中から「有効な数値（NaN以外）」だけを抽出
+            prices = [float(x) for x in raw_values if np.isscalar(x) and not np.isnan(x)]
             
-            close_now = float(prices[-1])
-            close_prev = float(prices[-2]) if len(prices) >= 2 else close_now
-            close_ytd = float(prices)
-            # ---------------------------------------------------------
+            if len(prices) < 1:
+                perf_text += f"\n◆ {name}\n   数値なし\n"
+                continue
 
-            # 計算（ここでもし万が一エラーが出ても止まらないようにする）
+            close_now = prices[-1]
+            close_prev = prices[-2] if len(prices) >= 2 else close_now
+            close_ytd = prices
+
+            # 4. 計算
             day_pct = ((close_now - close_prev) / close_prev * 100) if close_prev != 0 else 0
             ytd_pct = ((close_now - close_ytd) / close_ytd * 100) if close_ytd != 0 else 0
             
@@ -75,9 +76,7 @@ def get_market_summary():
             perf_text += f"   └ {desc}\n"
 
         except Exception as e:
-            # エラーが出た場合、その内容を極力短く表示
-            err_msg = str(e)[:15]
-            perf_text += f"\n◆ {name}\n   計算エラー({err_msg})\n"
+            perf_text += f"\n◆ {name}\n   システムエラー\n"
             
     return perf_text
 
