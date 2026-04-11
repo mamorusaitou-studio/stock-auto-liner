@@ -21,54 +21,53 @@ INDICES = {
 
 def get_data(ticker):
     try:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=1y&interval=1d"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        res = requests.get(url, headers=headers, timeout=10)
-        
-        if res.status_code != 200:
-            return f"HTTP {res.status_code}"
-
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=5d&interval=1d"
+        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
         data = res.json()
         
-        # ChatGPTが指摘した「」を確実に使う構造
-        chart = data.get('chart', {})
-        result_list = chart.get('result', [])
-        if not result_list: return "No Result"
+        # 【修正の核心】リスト を確実に指定して皮を剥く
+        result_list = data['chart']['result']
+        if not result_list: return None
         
-        main_result = result_list
-        indicators = main_result.get('indicators', {})
-        quote_list = indicators.get('quote', [])
-        if not quote_list: return "No Quote"
+        main_data = result_list
+        indicators = main_data['indicators']
+        quote_list = indicators['quote']
         
-        prices = quote_list.get('close', [])
+        # quoteもリストなので を指定
+        prices = quote_list['close']
+        
+        # 有効な数字のみ
         valid_prices = [p for p in prices if p is not None]
         
-        if len(valid_prices) < 2: return "No Data"
-        
-        return valid_prices[-1], valid_prices[-2]
+        if len(valid_prices) >= 2:
+            return valid_prices[-1], valid_prices[-2]
+        return None
     except Exception as e:
-        return str(e)
+        print(f"Error on {ticker}: {e}")
+        return None
 
 def main():
     report_time = datetime.now().strftime('%m/%d %H:%M')
-    msg = f"【🧭 米国市場：検証報告】\n{report_time}\n"
+    msg = f"【🧭 米国市場】\n{report_time}\n"
     
+    count = 0
     for ticker, name in INDICES.items():
         res = get_data(ticker)
-        
-        if isinstance(res, tuple):
+        if res:
             now, prev = res
             diff = ((now - prev) / prev) * 100
             val = now
             if ticker in ["^TNX", "^US2Y"] and val > 15: val /= 10
-            msg += f"\n◆ {name}\n   {val:,.2f} ({diff:+.2f}%)"
-        else:
-            # 取得失敗した場合、その理由（エラー名）をLINEに載せる
-            msg += f"\n◆ {name}\n   取得失敗: {res}"
-        
+            
+            # アイコン
+            icon = "🚀" if diff > 0 else "💦"
+            if ticker == "^VIX": icon = "😱" if diff > 0 else "😌"
+            
+            msg += f"\n◆ {name}\n   {val:,.2f} ({icon} {diff:+.2f}%)"
+            count += 1
         time.sleep(0.3)
 
-    if LINE_TOKEN and USER_ID:
+    if count > 0 and LINE_TOKEN and USER_ID:
         url = "https://api.line.me/v2/bot/message/push"
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {LINE_TOKEN}"}
         payload = {"to": USER_ID, "messages": [{"type": "text", "text": msg}]}
