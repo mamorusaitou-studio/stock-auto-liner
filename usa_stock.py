@@ -21,6 +21,9 @@ INDICES = {
 }
 
 def get_finance_data(ticker):
+    """
+    階層構造を1段階ずつ、型を確認しながら確実に掘り進める防弾ロジック
+    """
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=1y&interval=1d"
         headers = {'User-Agent': 'Mozilla/5.0'}
@@ -28,21 +31,31 @@ def get_finance_data(ticker):
         if res.status_code != 200: return None
         
         data = res.json()
-        # 階層を1つずつ検証しながら掘り進める
-        result_list = data.get('chart', {}).get('result')
-        if not result_list: return None
         
-        main = result_list
-        timestamps = main.get('timestamp', [])
+        # 1. 'chart' -> 'result' (リスト) を取得
+        chart_data = data.get('chart', {})
+        result_list = chart_data.get('result')
+        if not result_list or not isinstance(result_list, list): return None
         
-        # 【検証済み修正】quoteはリストなので0番目を指定
-        indicators = main.get('indicators', {})
-        quote_list = indicators.get('quote', [])
-        if not quote_list or not isinstance(quote_list, list): return None
+        # 2. 0番目の要素にアクセス
+        main_result = result_list
+        timestamps = main_result.get('timestamp', [])
         
-        prices = quote_list.get('close', [])
+        # 3. 'indicators' -> 'quote' (リスト) を取得
+        indicators = main_result.get('indicators', {})
+        quote_list = indicators.get('quote')
         
-        # 有効データのみ抽出
+        # 4. 【エラーの元】quote_list がリストであることを確認し、0番目を取り出す
+        if not quote_list or not isinstance(quote_list, list) or len(quote_list) == 0:
+            return None
+        
+        # ここでリストから「辞書」を取り出してから get を使う
+        actual_data_dict = quote_list
+        if not isinstance(actual_data_dict, dict): return None
+        
+        prices = actual_data_dict.get('close', [])
+        
+        # 5. 有効データ(None以外)を抽出
         clean_data = [(t, p) for t, p in zip(timestamps, prices) if p is not None]
         if len(clean_data) < 2: return None
 
@@ -57,8 +70,10 @@ def get_finance_data(ticker):
                 ytd_val = p
                 break
         return now, prev, ytd_val
+
     except Exception as e:
-        print(f"Verify Error on {ticker}: {e}")
+        # エラーが出た場合、ログに詳細を残す（検証用）
+        print(f"DEBUG: {ticker} failed with {type(e).__name__}: {e}")
         return None
 
 def get_market_summary():
@@ -81,12 +96,13 @@ def get_market_summary():
         if ticker in ["^TNX", "^US2Y"] and val > 15: val /= 10
         unit = "pt" if ticker == "^VIX" else ("%" if ticker in ["^TNX", "^US2Y"] else "")
         
-        day_icon = "🚀" if day_pct > 0 else "💦"
-        if ticker == "^VIX": day_icon = "😱" if day_pct > 0 else "😌"
-        elif ticker in ["^TNX", "^US2Y"]: day_icon = "📈" if day_pct > 0 else "📉"
+        # アイコン判定
+        is_warn = ticker in ["^TNX", "^US2Y", "^VIX"]
+        day_arrow = ("📈" if day_pct > 0 else "📉") if is_warn else ("🚀" if day_pct > 0 else "💦")
+        if ticker == "^VIX": day_arrow = "😱" if day_pct > 0 else "😌"
 
         text += f"\n◆ {name}\n"
-        text += f"   {val:,.2f}{unit} ({day_icon} {day_pct:+.2f}%)\n"
+        text += f"   {val:,.2f}{unit} ({day_arrow} {day_pct:+.2f}%)\n"
         text += f"   ┗ 年初来: {'🔥' if ytd_pct > 0 else '❄️'} {ytd_pct:+.2f}%\n"
         time.sleep(0.3)
 
@@ -99,4 +115,4 @@ if __name__ == "__main__":
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {LINE_TOKEN}"}
         payload = {"to": USER_ID, "messages": [{"type": "text", "text": message}]}
         res = requests.post(url, headers=headers, data=json.dumps(payload), timeout=10)
-        print(f"LINE Result: {res.status_code}")
+        print(f"LINE Result Status: {res.status_code}")
