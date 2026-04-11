@@ -1,30 +1,34 @@
-name: USA Stock Scan
+name: Market Report Bot
 
 on:
-  schedule:
-    - cron: '30 22 * * 1-5' # 日本時間 朝7:30 (火〜土)
   workflow_dispatch:
+  schedule:
+    - cron: '0 22 * * *' # 毎日決まった時間に実行する場合
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v4 # Node.js 20警告対策
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.9'
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24' # 今回の警告に対する直接の修正
+
       - name: Install dependencies
         run: |
-          pip install yfinance pandas lxml requests gspread google-auth
+          python -m pip install --upgrade pip
+          pip install requests
 
-      - name: Run USA script
+      - name: Run script
         env:
           LINE_TOKEN: ${{ secrets.LINE_TOKEN }}
           USER_ID: ${{ secrets.USER_ID }}
-          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
-          GCP_JSON: ${{ secrets.GCP_JSON }}
         run: python usa_stock.py
