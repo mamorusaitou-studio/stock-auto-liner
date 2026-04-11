@@ -2,16 +2,14 @@ import yfinance as yf
 import requests
 import json
 import os
-import pandas as pd
 from datetime import datetime
 
 # ==========================================
-# 設定エリア (GitHubのSecretsを使用)
+# 設定エリア
 # ==========================================
 LINE_TOKEN = os.environ.get("LINE_TOKEN")
 USER_ID = os.environ.get("USER_ID")
 
-# 【米国市場専用】銘柄リスト
 INDICES = {
     "^GSPC": ("S&P 500", "米国株の体温計。主要500社の動き。"),
     "^NDX": ("Nasdaq 100", "ハイテク株の象徴。金利上昇に弱い。"),
@@ -35,31 +33,36 @@ def get_market_summary():
     
     for ticker, (name, desc) in INDICES.items():
         try:
-            # 最新のyfinance仕様対策: 確実に1次元の数値として取得する
-            # group_by='ticker' を外して取得し、末尾の数値を取り出す
-            data = yf.download(ticker, start=f"{current_year}-01-01", progress=False)
-            
-            if data.empty:
-                data = yf.download(ticker, period="5d", progress=False)
+            # 1. データを取得
+            df = yf.download(ticker, start=f"{current_year}-01-01", progress=False)
+            if df.empty:
+                df = yf.download(ticker, period="5d", progress=False)
 
-            if data.empty:
-                perf_text += f"\n◆ {name}\n   データ取得不能\n"
+            # 2. 【究極のエラー対策】名前を無視して「数値」だけをリスト化
+            # .values で純粋な配列にし、.flatten() で1次元にしてから、
+            # float以外（見出し等）を徹底排除して「数字だけの列」を作る
+            raw_data = df.values.flatten()
+            prices = []
+            for val in raw_data:
+                try:
+                    p = float(val)
+                    if p == p: # NaN（空データ）チェック
+                        prices.append(p)
+                except:
+                    continue
+
+            if len(prices) < 2:
+                perf_text += f"\n◆ {name}\n   データ不足\n"
                 continue
 
-            # --- 最強の数値抽出処理 ---
-            # どんな多重構造になっていても、一番右端の「Close」列を数値として引っこ抜く
-            df_close = data['Close'].dropna()
-            
-            # Seriesの末尾から純粋な値(float)として取得
-            prices = df_close.values.tolist()
-            if isinstance(prices, list): # 二重リスト対策
-                prices = [p for p in prices]
-                
-            close_now = float(prices[-1])
-            close_prev = float(prices[-2]) if len(prices) >= 2 else close_now
-            close_ytd = float(prices)
-            # -------------------------
+            # 3. yfinanceの多重構造(Open, High, Low, Close...)を考慮し、
+            # 1日あたりのデータ数（通常6個か8個）で最新と年初を特定する
+            cols_count = len(df.columns)
+            close_now = prices[-1] # 一番最後が最新の終値
+            close_prev = prices[-(1 + cols_count)] # 1行分前が前日の終値
+            close_ytd = prices[cols_count - 1] # 最初の行の最後が年初の終値
 
+            # 4. 騰落率の計算
             day_pct = ((close_now - close_prev) / close_prev) * 100
             ytd_pct = ((close_now - close_ytd) / close_ytd) * 100
             
@@ -75,9 +78,8 @@ def get_market_summary():
             perf_text += f"   ┗ 年初来: {ytd_arrow} {ytd_pct:+.2f}%\n"
             perf_text += f"   └ {desc}\n"
 
-        except Exception as e:
-            # 何が起きたか特定するためにエラー名を出す設定
-            perf_text += f"\n◆ {name}\n   計算中...(エラー:{type(e).__name__})\n"
+        except Exception:
+            perf_text += f"\n◆ {name}\n   計算エラー（対策中）\n"
             
     return perf_text
 
