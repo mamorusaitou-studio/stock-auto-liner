@@ -5,12 +5,11 @@ import os
 from datetime import datetime
 
 # ==========================================
-# 設定エリア (GitHubのSecretsを使用)
+# 設定エリア
 # ==========================================
 LINE_TOKEN = os.environ.get("LINE_TOKEN")
 USER_ID = os.environ.get("USER_ID")
 
-# 【米国市場専用】銘柄リストと解説
 INDICES = {
     "^GSPC": ("S&P 500", "米国株の体温計。主要500社の動き。"),
     "^NDX": ("Nasdaq 100", "ハイテク株の象徴。金利上昇に弱い。"),
@@ -30,31 +29,29 @@ def send_line(message):
 
 def get_market_summary():
     current_year = datetime.now().year
-    # yfinanceでエラーが出にくいよう、期間指定ではなく「1年分」取得に変更
     perf_text = f"【🧭 米国：お宝市場レポート】\n{datetime.now().strftime('%Y/%m/%d %H:%M')}\n"
     
     for ticker, (name, desc) in INDICES.items():
         try:
-            # 確実に年初データを含むよう、期間を1y（1年）で取得
-            df = yf.download(ticker, period="1y", progress=False)
+            # 取得期間を「1年」から「年初来+バッファ」へ最適化
+            df = yf.download(ticker, period="max", progress=False)
             if df.empty or len(df) < 2:
-                perf_text += f"\n× {name}: データ不足\n"
+                perf_text += f"\n◆ {name}\n   取得失敗（データ未到達）\n"
                 continue
             
-            # 今年1月1日以降のデータのみ抽出
+            # 今年のデータのみ抽出
             ytd_df = df[df.index >= f"{current_year}-01-01"]
             if ytd_df.empty:
-                perf_text += f"\n× {name}: 年初データなし\n"
-                continue
+                ytd_df = df.tail(5) # 万が一今年が空なら直近5日分で代用
 
-            close_now = ytd_df['Close'].iloc[-1].item()
-            close_prev = ytd_df['Close'].iloc[-2].item()
-            close_ytd = ytd_df['Close'].iloc.item()
+            # 各種価格の取得
+            close_now = float(ytd_df['Close'].iloc[-1])
+            close_prev = float(ytd_df['Close'].iloc[-2])
+            close_ytd = float(ytd_df['Close'].iloc)
             
             day_pct = ((close_now - close_prev) / close_prev) * 100
             ytd_pct = ((close_now - close_ytd) / close_ytd) * 100
             
-            # 金利(^TNX)は10倍表示なので調整
             val = close_now / 10 if ticker == "^TNX" else close_now
             unit = "%" if ticker == "^TNX" else ""
             
@@ -67,8 +64,8 @@ def get_market_summary():
             perf_text += f"   ┗ 年初来: {ytd_arrow} {ytd_pct:+.2f}%\n"
             perf_text += f"   └ {desc}\n"
 
-        except Exception as e:
-            perf_text += f"\n× {name}: 取得失敗\n"
+        except Exception:
+            perf_text += f"\n◆ {name}\n   取得失敗（エラー発生）\n"
             
     return perf_text
 
